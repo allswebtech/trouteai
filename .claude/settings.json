@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm run lint)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run typecheck:baseline)",
+      "Bash(npm run build)",
+      "Bash(npm test)",
+      "Bash(npm run test:all)",
+      "Bash(npx prettier --check *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git ls-files *)",
+      "Bash(git grep *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.*.local)",
+      "Read(./.env.development)",
+      "Read(./.env.production)",
+      "Read(./**/server.env)",
+      "Read(./**/initial-admin-password.txt)",
+      "Read(./**/*.sqlite)",
+      "Read(./**/*.sqlite-*)",
+      "Read(./**/*.api-key)",
+      "Read(./data/**)",
+      "Read(./.trouteai-data/**)",
+      "Read(./test-data/**)",
+      "Read(~/.trouteai/**)"
+    ]
+  }
+}

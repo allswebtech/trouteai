@@ -1,0 +1,6 @@
+.build/
+node_modules/
+package-lock.json
+
+# Dense data rows (one object per line); prettier's multi-line expansion makes the file huge.
+open-sse/config/freeModelCatalog.data.ts

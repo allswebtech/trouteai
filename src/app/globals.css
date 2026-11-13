@@ -1,0 +1,688 @@
+@import "tailwindcss";
+/* Self-hosted Material Symbols icon font (#3695): the Google Fonts CDN
+   (fonts.googleapis.com) is blocked in some networks (e.g. mainland China),
+   which made every icon ligature fall back to its literal text name and broke
+   the layout. Bundling the font locally removes that runtime CDN dependency.
+   The bundled @font-face uses family "Material Symbols Outlined", matching the
+   .material-symbols-outlined rule defined later in this file. */
+@import "material-symbols/outlined.css";
+
+/* Tailwind v4 auto-detection cannot scan directories with parentheses
+   (e.g. Next.js route groups like "(dashboard)"). Explicit @source
+   directives ensure all utility classes in route groups are included. */
+@source "../app/(dashboard)";
+@source not "../../*.sqlite*";
+@source not "../../.claude*";
+@source not "../../.claude-memory";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* TRouteAI color palette — "Clean Pro": neutral zinc surfaces, one accent (logo blue). */
+:root {
+  color-scheme: light;
+
+  /* Primary - logo blue (white on #2563eb passes WCAG AA) */
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  /* Text/icons drawn in the accent color (lighter teal in .dark below) */
+  --color-primary-text: #2563eb;
+  /* Text on solid accent backgrounds */
+  --color-on-primary: #ffffff;
+
+  /* Accent follows primary */
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-light: #60a5fa;
+
+  /* Semantic */
+  --color-error: #dc2626;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-info: #0284c7;
+
+  /* Traffic lights */
+  --color-traffic-red: #ff5f56;
+  --color-traffic-yellow: #ffbd2e;
+  --color-traffic-green: #27c93f;
+
+  /* Light theme — neutral zinc surfaces */
+  --color-bg: #fafafa;
+  --color-bg-alt: #f4f4f5;
+  --color-bg-primary: #fafafa;
+  --color-bg-subtle: #f4f4f5;
+  --color-surface: #ffffff;
+  --color-card: #ffffff;
+  --color-sidebar: #fafafa;
+  --color-border: rgba(9, 9, 11, 0.09);
+  --color-text-main: #09090b;
+  --color-text-primary: #09090b;
+  --color-text-muted: #71717a;
+
+  /* Fumadocs light theme */
+  --color-fd-background: #fafafa;
+  --color-fd-foreground: #09090b;
+  --color-fd-muted: #f4f4f5;
+  --color-fd-muted-foreground: #71717a;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #09090b;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #09090b;
+  --color-fd-border: rgba(9, 9, 11, 0.09);
+  --color-fd-primary: #2563eb;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #f4f4f5;
+  --color-fd-secondary-foreground: #09090b;
+  --color-fd-accent: rgba(37, 99, 235, 0.08);
+  --color-fd-accent-foreground: #09090b;
+  --color-fd-ring: #2563eb;
+
+  /* Shadows — neutral only; cards use borders, shadows are for popovers/menus/modals */
+  --shadow-soft: 0 1px 2px rgba(9, 9, 11, 0.04);
+  --shadow-warm: 0 1px 2px rgba(9, 9, 11, 0.05), 0 2px 6px rgba(9, 9, 11, 0.04);
+  --shadow-elevated: 0 8px 24px -8px rgba(9, 9, 11, 0.16), 0 2px 6px rgba(9, 9, 11, 0.05);
+
+  /* Legacy wallpaper grid tokens (grid disabled; kept so old references resolve). */
+  --grid-line: transparent;
+  --grid-size: 32px;
+  --section-alt: rgba(9, 9, 11, 0.02);
+
+  /* Identity tokens */
+  --surface-2: #f4f4f5;
+  --radius: 10px;
+  --radius-control: 8px;
+  /* Flat on purpose: no decorative gradients (name kept for existing references) */
+  --grad-brand: var(--color-primary);
+
+  /* Data-table surfaces — theme-aware */
+  --table-header-bg: var(--color-surface);
+  --table-row-zebra: transparent;
+  --table-row-hover: #f4f4f5;
+  --table-cell-border: rgba(9, 9, 11, 0.06);
+  /* Selected row — an accent tint that reads on both themes (inherited by .dark). */
+  --table-row-selected: rgba(37, 99, 235, 0.1);
+}
+
+.dark {
+  /* Dark theme — neutral zinc surfaces */
+  color-scheme: dark;
+  --color-primary-text: #60a5fa;
+  --color-bg: #09090b;
+  --color-bg-alt: #111113;
+  --color-bg-primary: #09090b;
+  --color-bg-subtle: #18181b;
+  --color-surface: #111113;
+  --color-card: #111113;
+  --color-sidebar: #09090b;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-text-main: #fafafa;
+  --color-text-primary: #fafafa;
+  --color-text-muted: #a1a1aa;
+
+  /* Fumadocs theme mapping */
+  --color-fd-background: #09090b;
+  --color-fd-foreground: #fafafa;
+  --color-fd-muted: #18181b;
+  --color-fd-muted-foreground: #a1a1aa;
+  --color-fd-popover: #111113;
+  --color-fd-popover-foreground: #fafafa;
+  --color-fd-card: #111113;
+  --color-fd-card-foreground: #fafafa;
+  --color-fd-border: rgba(255, 255, 255, 0.08);
+  --color-fd-primary: #2563eb;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #18181b;
+  --color-fd-secondary-foreground: #fafafa;
+  --color-fd-accent: rgba(96, 165, 250, 0.12);
+  --color-fd-accent-foreground: #fafafa;
+  --color-fd-ring: #60a5fa;
+
+  /* Dark shadows — neutral */
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-warm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.25);
+  --shadow-elevated: 0 12px 32px -8px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.3);
+
+  --grid-line: transparent;
+  --section-alt: rgba(255, 255, 255, 0.02);
+  --surface-2: #18181b;
+
+  /* Data-table surfaces */
+  --table-header-bg: var(--color-surface);
+  --table-row-zebra: transparent;
+  --table-row-hover: #18181b;
+  --table-cell-border: rgba(255, 255, 255, 0.06);
+  --table-row-selected: rgba(96, 165, 250, 0.1);
+}
+
+/* Legacy variable names still used by a few pages (breadcrumbs, logs, charts). They were
+   never defined, so their dark-theme fallbacks (#e0e0e0 text, #1e1e2e cards) showed in light
+   mode. Point them at the theme colors so they follow light/dark automatically. */
+:root {
+  --text-primary: var(--color-text-main);
+  --text-secondary: var(--color-text-muted);
+  --text-muted: var(--color-text-muted);
+  --border: var(--color-border);
+  --surface: var(--color-surface);
+  --bg-surface: var(--color-surface);
+  --card-bg: var(--color-card);
+  --hover-bg: var(--table-row-hover);
+  --bg-primary: var(--color-bg);
+  --accent: var(--color-primary);
+}
+
+@theme inline {
+  /* Primary */
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-primary-text: var(--color-primary-text);
+  --color-primary-foreground: var(--color-on-primary);
+  --color-on-primary: var(--color-on-primary);
+
+  /* Accent */
+  --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-accent-light: var(--color-accent-light);
+
+  /* Semantic */
+  --color-error: var(--color-error);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+
+  /* Auto-switch colors (use CSS variables from :root/.dark) */
+  --color-bg: var(--color-bg);
+  --color-bg-primary: var(--color-bg-primary);
+  --color-bg-subtle: var(--color-bg-subtle);
+  --color-surface: var(--color-surface);
+  --color-card: var(--color-card);
+  --color-sidebar: var(--color-sidebar);
+  --color-border: var(--color-border);
+  --color-text-main: var(--color-text-main);
+  --color-text-primary: var(--color-text-primary);
+  --color-text-muted: var(--color-text-muted);
+
+  /* Aliases for class names used in the dashboard that had no color defined
+     (bg-background, bg-bg-alt, text-destructive, bg-muted, …). Without these the
+     classes generated no CSS, leaving transparent panels and low-contrast text. */
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-text-main);
+  --color-bg-alt: var(--color-bg-alt);
+  --color-bg-base: var(--color-bg);
+  --color-bg-card: var(--color-card);
+  --color-bg-hover: var(--table-row-hover);
+  --color-bg-muted: var(--color-bg-subtle);
+  --color-bg-secondary: var(--color-bg-subtle);
+  --color-muted: var(--color-bg-subtle);
+  --color-muted-foreground: var(--color-text-muted);
+  --color-text: var(--color-text-main);
+  --color-text-soft: var(--color-text-muted);
+  --color-text-secondary: var(--color-text-muted);
+  --color-surface-1: var(--color-surface);
+  --color-surface-alt: var(--surface-2);
+  --color-surface-hover: var(--surface-2);
+  --color-surface-raised: var(--color-surface);
+  --color-input: var(--color-surface);
+  --color-border-default: var(--color-border);
+  --color-destructive: var(--color-error);
+  --color-info: var(--color-info);
+
+  /* Static colors (for explicit light/dark usage) */
+  --color-bg-light: #fafafa;
+  --color-bg-dark: #09090b;
+  --color-surface-light: #ffffff;
+  --color-surface-dark: #111113;
+  --color-sidebar-light: #fafafa;
+  --color-sidebar-dark: #09090b;
+  --color-border-light: #e4e4e7;
+  --color-border-dark: #27272a;
+  --color-text-main-light: #09090b;
+  --color-text-main-dark: #fafafa;
+  --color-text-muted-light: #71717a;
+  --color-text-muted-dark: #a1a1aa;
+
+  /* Shadows */
+  --shadow-soft: var(--shadow-soft);
+  --shadow-warm: var(--shadow-warm);
+  --shadow-elevated: var(--shadow-elevated);
+  --shadow-sm: var(--shadow-soft);
+
+  /* Font — Inter (self-hosted via next/font), system stack as fallback */
+  --font-sans:
+    var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  /* Monospace stack (parity with the site) — code blocks, IDs, endpoints, terminals */
+  --font-mono: ui-monospace, "JetBrains Mono", "Fira Code", "SF Mono", monospace;
+
+  /* Nested surface (enables bg-surface-2) */
+  --color-surface-2: var(--surface-2);
+
+  /* Semantic radius scale → rounded-card (surfaces, 10px) / rounded-control (controls,
+     8px). Custom names so the default rounded-sm/md/lg/xl utilities stay untouched. */
+  --radius-card: var(--radius);
+  --radius-control: var(--radius-control);
+}
+
+/* ── Focus Indicators (U-3) ── */
+:root {
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--color-primary) 65%, transparent);
+}
+
+/* Visible focus ring on keyboard navigation only */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 4px;
+}
+
+/* Utility class for custom focus ring */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Remove focus ring from mouse clicks */
+:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Base styles */
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text-main);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 14px;
+  font-feature-settings: "cv11", "ss01";
+}
+
+/* Numbers line up in tables, stats and counters */
+.tabular-nums,
+table td,
+table th {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Selection — with fallback for browsers that don't support color-mix() */
+::selection {
+  background-color: rgba(37, 99, 235, 0.18);
+  background-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: inherit;
+}
+
+/* Global custom scrollbar — thin, minimal, theme-aware */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(113, 113, 122, 0.25);
+  border-radius: 9999px;
+  transition: background-color 0.2s;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(113, 113, 122, 0.45);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Dark theme scrollbar — slightly brighter thumb */
+.dark *::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.dark *::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Firefox support */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(113, 113, 122, 0.25) transparent;
+}
+
+.dark * {
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+}
+
+/* Keep .custom-scrollbar alias for backward compatibility */
+.custom-scrollbar {
+  scrollbar-width: thin;
+}
+
+/* Hero gradient */
+.bg-hero-gradient {
+  background: var(--color-bg);
+}
+
+.dark .bg-hero-gradient {
+  background: var(--color-bg);
+}
+
+/* Material Symbols */
+:where(.material-symbols-outlined) {
+  font-family: "Material Symbols Outlined", sans-serif !important;
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-feature-settings: "liga";
+  -webkit-font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+  user-select: none;
+}
+
+/* Ensure icon clicks always bubble to the parent button */
+button .material-symbols-outlined,
+[role="button"] .material-symbols-outlined {
+  pointer-events: none;
+}
+
+.material-symbols-outlined.fill-1 {
+  font-variation-settings:
+    "FILL" 1,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+}
+
+/* Animations */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes border-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 5px rgba(229, 77, 94, 0.3),
+      0 0 10px rgba(229, 77, 94, 0.2);
+    border-color: rgba(229, 77, 94, 0.5);
+  }
+  50% {
+    box-shadow:
+      0 0 10px rgba(229, 77, 94, 0.5),
+      0 0 20px rgba(229, 77, 94, 0.3);
+    border-color: rgba(229, 77, 94, 0.8);
+  }
+}
+
+.animate-border-glow {
+  animation: border-glow 2s ease-in-out infinite;
+}
+
+/* macOS Vibrancy/Blur Effect */
+.bg-vibrancy {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background: rgba(250, 250, 250, 0.8);
+}
+
+.dark .bg-vibrancy {
+  background: rgba(9, 9, 11, 0.8);
+}
+
+/* macOS Traffic Lights */
+.traffic-lights {
+  display: flex;
+  gap: 8px;
+}
+
+.traffic-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.traffic-light.red {
+  background: var(--color-traffic-red);
+}
+
+.traffic-light.yellow {
+  background: var(--color-traffic-yellow);
+}
+
+.traffic-light.green {
+  background: var(--color-traffic-green);
+}
+
+/* ── Mobile Layout Fixes (Issue #659) ── */
+@media (max-width: 768px) {
+  .ant-table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100vw;
+  }
+
+  .ant-table {
+    min-width: 600px; /* Prevent columns from crushing together */
+  }
+}
+
+/* Fix for native dropdown options visibility in dark mode */
+select option {
+  background-color: var(--color-surface);
+  color: var(--color-text-main);
+}
+
+/* React Flow loads its component stylesheet after this global file in some
+   bundles, so direct background/fill declarations can lose to its shorthand
+   rules. Override the supported theme variables on our canvas instead. */
+.react-flow.trouteai-flow {
+  --xy-controls-button-background-color: var(--color-surface);
+  --xy-controls-button-background-color-hover: var(--color-bg-subtle);
+  --xy-controls-button-color: var(--color-text-main);
+  --xy-controls-button-color-hover: var(--color-text-main);
+  --xy-controls-button-border-color: var(--color-border);
+}
+
+/* Desktop sidebar visibility must not depend on Tailwind's hidden/lg:flex cascade
+   (ordering/specificity can collapse it). Explicit class + 1024px media query. */
+.dashboard-sidebar-desktop {
+  display: none;
+  min-height: 0;
+}
+@media (min-width: 1024px) {
+  .dashboard-sidebar-desktop {
+    display: flex;
+  }
+}
+
+/* Dark mode: buttons and backgrounds keep the solid main color (white text on it stays
+   readable), but text and icons drawn in the main color use the lighter
+   --color-primary-text so they stay readable on dark surfaces. :where() keeps the
+   specificity equal to the generated utility, so hover/state colors still win. */
+@layer utilities {
+  :where(.dark) .text-primary,
+  :where(.dark) .hover\:text-primary:hover {
+    color: var(--color-primary-text);
+  }
+  :where(.dark) .text-accent {
+    color: var(--color-primary-text);
+  }
+  :where(.dark) .text-primary\/80,
+  :where(.dark) .hover\:text-primary\/80:hover {
+    color: color-mix(in oklab, var(--color-primary-text) 80%, transparent);
+  }
+  :where(.dark) .text-primary\/70 {
+    color: color-mix(in oklab, var(--color-primary-text) 70%, transparent);
+  }
+}
+
+/* Light mode: many status labels use light shades (text-green-400, text-amber-300, …) that
+   were designed for dark backgrounds and are nearly invisible on white. In light mode show
+   the darker 700 shade instead. Dark mode, dark: variants and always-dark panels
+   (.always-dark, e.g. the console log viewer) are unaffected. */
+@layer utilities {
+  :where(html:not(.dark)) .text-red-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-red-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-red-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-red-600:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-error:not(:where(.always-dark *)) {
+    color: #991b1b;
+  }
+  :where(html:not(.dark)) .text-orange-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-orange-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-orange-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-orange-600:not(:where(.always-dark *)) {
+    color: #9a3412;
+  }
+  :where(html:not(.dark)) .text-amber-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-amber-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-amber-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-amber-600:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-warning:not(:where(.always-dark *)) {
+    color: #92400e;
+  }
+  :where(html:not(.dark)) .text-yellow-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-yellow-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-yellow-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-yellow-600:not(:where(.always-dark *)) {
+    color: #854d0e;
+  }
+  :where(html:not(.dark)) .text-lime-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-lime-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-lime-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-lime-600:not(:where(.always-dark *)) {
+    color: #3f6212;
+  }
+  :where(html:not(.dark)) .text-green-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-green-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-green-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-green-600:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-success:not(:where(.always-dark *)) {
+    color: #166534;
+  }
+  :where(html:not(.dark)) .text-emerald-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-emerald-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-emerald-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-emerald-600:not(:where(.always-dark *)) {
+    color: #065f46;
+  }
+  :where(html:not(.dark)) .text-teal-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-teal-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-teal-600:not(:where(.always-dark *)) {
+    color: #115e59;
+  }
+  :where(html:not(.dark)) .text-cyan-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-cyan-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-cyan-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-cyan-600:not(:where(.always-dark *)) {
+    color: #155e75;
+  }
+  :where(html:not(.dark)) .text-sky-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-sky-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-sky-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-sky-600:not(:where(.always-dark *)) {
+    color: #075985;
+  }
+  :where(html:not(.dark)) .text-blue-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-blue-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-blue-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-blue-600:not(:where(.always-dark *)) {
+    color: #1d4ed8;
+  }
+  :where(html:not(.dark)) .text-indigo-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-indigo-500:not(:where(.always-dark *)) {
+    color: #4338ca;
+  }
+  :where(html:not(.dark)) .text-violet-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-violet-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-violet-500:not(:where(.always-dark *)) {
+    color: #6d28d9;
+  }
+  :where(html:not(.dark)) .text-purple-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-purple-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-purple-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-purple-600:not(:where(.always-dark *)) {
+    color: #7e22ce;
+  }
+  :where(html:not(.dark)) .text-fuchsia-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-fuchsia-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-fuchsia-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-fuchsia-600:not(:where(.always-dark *)) {
+    color: #86198f;
+  }
+  :where(html:not(.dark)) .text-pink-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-pink-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-pink-600:not(:where(.always-dark *)) {
+    color: #9d174d;
+  }
+  :where(html:not(.dark)) .text-rose-300:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-rose-400:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-rose-500:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-rose-600:not(:where(.always-dark *)) {
+    color: #9f1239;
+  }
+  :where(html:not(.dark)) .text-primary:not(:where(.always-dark *)),
+  :where(html:not(.dark)) .text-accent:not(:where(.always-dark *)) {
+    color: var(--color-primary-text);
+  }
+
+  /* Semantic colors as TEXT need more contrast than as fills/dots (WCAG AA 4.5:1).
+     Fills (bg-*, border-*) keep the token value; only text-* is shifted per theme. */
+  :where(html:not(.dark)) .text-success {
+    color: #15803d;
+  }
+  :where(html:not(.dark)) .text-warning {
+    color: #b45309;
+  }
+  :where(html:not(.dark)) .text-error {
+    color: #b91c1c;
+  }
+  :where(html:not(.dark)) .text-info {
+    color: #0369a1;
+  }
+  :where(.dark) .text-success {
+    color: #4ade80;
+  }
+  :where(.dark) .text-warning {
+    color: #fbbf24;
+  }
+  :where(.dark) .text-error {
+    color: #f87171;
+  }
+  :where(.dark) .text-info {
+    color: #38bdf8;
+  }
+}

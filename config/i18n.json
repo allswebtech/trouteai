@@ -1,0 +1,15 @@
+{
+  "default": "en",
+  "rtl": [],
+  "uiOnly": ["en"],
+  "locales": [
+    {
+      "code": "en",
+      "label": "EN",
+      "name": "English",
+      "native": "English",
+      "english": "English",
+      "flag": "🇺🇸"
+    }
+  ]
+}

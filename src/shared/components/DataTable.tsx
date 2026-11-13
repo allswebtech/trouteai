@@ -1,0 +1,188 @@
+"use client";
+
+import { useTranslations } from "next-intl";
+
+/**
+ * DataTable — Shared UI primitive (T-29)
+ *
+ * Configurable data table with sticky header, row click,
+ * and optional loading/empty states. Extracts the shared
+ * table rendering pattern from RequestLoggerV2 and ProxyLogger.
+ *
+ * Usage:
+ *   <DataTable
+ *     columns={visibleColumns}
+ *     data={filteredLogs}
+ *     renderCell={(row, column) => <span>{row[column.key]}</span>}
+ *     onRowClick={(row) => openDetail(row)}
+ *     selectedId={selectedLog?.id}
+ *     loading={isLoading}
+ *     emptyIcon="list_alt"
+ *     emptyMessage="No logs found"
+ *   />
+ */
+
+interface DataTableColumn {
+  key: string;
+  label: string;
+  maxWidth?: string;
+}
+
+interface DataTableRow {
+  id?: string | number;
+  [key: string]: unknown;
+}
+
+interface DataTableProps {
+  columns?: DataTableColumn[];
+  data?: DataTableRow[];
+  renderCell: (row: DataTableRow, column: DataTableColumn) => React.ReactNode;
+  renderHeader?: (column: DataTableColumn) => React.ReactNode;
+  onRowClick?: (row: DataTableRow) => void;
+  selectedId?: string | number;
+  loading?: boolean;
+  maxHeight?: string;
+  emptyIcon?: string;
+  emptyMessage?: string;
+}
+
+export default function DataTable({
+  columns = [],
+  data = [],
+  renderCell,
+  renderHeader,
+  onRowClick,
+  selectedId,
+  loading = false,
+  maxHeight = "calc(100vh - 320px)",
+  emptyIcon = "inbox",
+  emptyMessage,
+}: DataTableProps) {
+  const t = useTranslations("common");
+  const resolvedEmptyMessage = emptyMessage ?? t("noData");
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center gap-2 px-6 py-12 text-sm text-text-muted">
+        <span
+          className="material-symbols-outlined animate-spin text-[18px] text-text-muted"
+          aria-hidden="true"
+        >
+          progress_activity
+        </span>
+        {t("loading")}
+      </div>
+    );
+  }
+
+  if (data.length === 0) {
+    const iconIsSymbol = /^[a-z][a-z0-9_]*$/.test(emptyIcon);
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 px-6 py-12 text-sm text-text-muted">
+        {iconIsSymbol ? (
+          <span className="material-symbols-outlined text-[28px] opacity-60" aria-hidden="true">
+            {emptyIcon}
+          </span>
+        ) : (
+          <span className="text-[28px] opacity-60">{emptyIcon}</span>
+        )}
+        {resolvedEmptyMessage}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        overflow: "auto",
+        maxHeight,
+        borderRadius: "var(--radius-control)",
+        // Opaque surface so the body grid wallpaper never bleeds through the
+        // transparent even-rows / low-alpha zebra when the table renders card-less.
+        background: "var(--color-surface)",
+      }}
+    >
+      <table
+        style={{
+          width: "100%",
+          borderCollapse: "collapse",
+          fontSize: "13px",
+          fontVariantNumeric: "tabular-nums",
+          tableLayout: "auto",
+        }}
+      >
+        <thead>
+          <tr>
+            {columns.map((col) => (
+              <th
+                key={col.key}
+                style={{
+                  height: "36px",
+                  padding: "0 12px",
+                  textAlign: "start",
+                  fontWeight: 500,
+                  color: "var(--color-text-muted)",
+                  borderBottom: "1px solid var(--color-border)",
+                  position: "sticky",
+                  top: 0,
+                  background: "var(--table-header-bg)",
+                  zIndex: 1,
+                  whiteSpace: "nowrap",
+                  fontSize: "12px",
+                }}
+              >
+                {renderHeader ? renderHeader(col) : col.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((row, idx) => (
+            <tr
+              key={row.id || idx}
+              onClick={() => onRowClick?.(row)}
+              style={{
+                cursor: onRowClick ? "pointer" : "default",
+                background:
+                  row.id === selectedId
+                    ? "var(--table-row-selected)"
+                    : idx % 2 === 0
+                      ? "transparent"
+                      : "var(--table-row-zebra)",
+                transition: "background 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                if (row.id !== selectedId) {
+                  e.currentTarget.style.background = "var(--table-row-hover)";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (row.id !== selectedId) {
+                  e.currentTarget.style.background =
+                    idx % 2 === 0 ? "transparent" : "var(--table-row-zebra)";
+                }
+              }}
+            >
+              {columns.map((col) => (
+                <td
+                  key={col.key}
+                  style={{
+                    height: "40px",
+                    padding: "0 12px",
+                    borderBottom: "1px solid var(--table-cell-border)",
+                    whiteSpace: "nowrap",
+                    maxWidth: col.maxWidth || "200px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {renderCell(row, col)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

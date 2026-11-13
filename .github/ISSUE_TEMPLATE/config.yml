@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/allswebtech/trouteai/security/advisories/new
+    about: Private report to the maintainers. Please never post security problems in a public issue.
+  - name: Questions and setup help
+    url: https://github.com/allswebtech/trouteai/discussions
+    about: Ask how to set something up, or share how you use TRouteAI.

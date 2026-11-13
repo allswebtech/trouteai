@@ -1,0 +1,117 @@
+"use client";
+
+import { Suspense, useEffect, useInsertionEffect, useState } from "react";
+import Sidebar from "../Sidebar";
+import Header from "../Header";
+import NotificationToast from "../NotificationToast";
+import Breadcrumbs from "../Breadcrumbs";
+import MaintenanceBanner from "../MaintenanceBanner";
+import CommandPalette from "../CommandPalette";
+import NavigationProgress from "../NavigationProgress";
+import { ConfirmDialogHost } from "../ConfirmDialog";
+import {
+  installDashboardCsrfFetch,
+  prefetchDashboardCsrfToken,
+} from "@/shared/utils/dashboardCsrf";
+import { installBasePathFetch } from "@/shared/utils/basePathFetch";
+
+const SIDEBAR_COLLAPSED_KEY = "sidebar-collapsed";
+const isE2EMode = process.env.NEXT_PUBLIC_TROUTEAI_E2E_MODE === "1";
+
+export default function DashboardLayout({ children }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true") {
+        setTimeout(() => setCollapsed(true), 0);
+      }
+    } catch {}
+  }, []);
+
+  useInsertionEffect(() => {
+    // basePath rewrite must wrap native fetch first so CSRF's originalFetch
+    // chain (and bare `fetch("/api/...")` call sites) hit the subpath.
+    const uninstallBasePathFetch = installBasePathFetch();
+    const uninstallDashboardCsrfFetch = installDashboardCsrfFetch();
+    void prefetchDashboardCsrfToken();
+    return () => {
+      uninstallDashboardCsrfFetch();
+      uninstallBasePathFetch();
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCommandPaletteOpen((prev) => !prev);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const handleToggleCollapse = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+  };
+
+  return (
+    <div className="flex h-dvh min-h-0 w-full overflow-hidden bg-bg">
+      <Suspense fallback={null}>
+        <NavigationProgress />
+      </Suspense>
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar - Desktop: keep visibility independent from Tailwind hidden/lg:flex ordering. */}
+      <div className="dashboard-sidebar-desktop">
+        <Sidebar collapsed={collapsed} onToggleCollapse={handleToggleCollapse} />
+      </div>
+
+      {/* Sidebar - Mobile: full viewport height with proper scroll containment */}
+      <div
+        id="mobile-sidebar"
+        className={`fixed inset-y-0 start-0 z-50 h-dvh transform overflow-y-auto shadow-elevated transition-transform duration-200 ease-out lg:hidden ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <Sidebar onClose={() => setSidebarOpen(false)} />
+      </div>
+
+      {/* Main content */}
+      <main id="main-content" className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <Header
+          onMenuClick={() => setSidebarOpen(true)}
+          menuOpen={sidebarOpen}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        />
+        {!isE2EMode && <MaintenanceBanner />}
+        <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6">
+          {/* Fluid up to a 4K cap (3840px): content follows the viewport on large
+              monitors and only centers (side gutters) beyond ~4K, instead of the prior
+              1280px cap that left big empty margins on wide screens. */}
+          <div className="mx-auto flex h-full min-h-0 w-full max-w-[3840px] flex-col">
+            <Breadcrumbs />
+            <div className="flex-1 min-h-0">{children}</div>
+          </div>
+        </div>
+      </main>
+
+      {/* Global notification toast system */}
+      <NotificationToast />
+      <ConfirmDialogHost />
+
+      <CommandPalette isOpen={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
+    </div>
+  );
+}

@@ -1,0 +1,50 @@
+# Lint, type check (against the committed baseline), build, then every offline test suite.
+# No secrets and no accounts: the tests run against local mock providers on localhost.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      # A throwaway data folder, so the build never reads or writes ~/.trouteai.
+      - name: Build
+        run: DATA_DIR="$(mktemp -d)" npm run build
+
+      # After the build: tsconfig also reads the type files the build generates.
+      - name: Type check (no new errors)
+        run: npm run typecheck:baseline
+
+      - name: Smoke test (npm test)
+        run: npm test
+
+      - name: Context size, usage-limit routing and the other offline checks
+        run: sh tests/all.sh context quota checks

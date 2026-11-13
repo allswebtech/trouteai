@@ -1,0 +1,76 @@
+# Publishes a version to npm when its tag (v1.2.3) is pushed. No token is stored anywhere: npm
+# trusts this workflow in this repository (trusted publishing over OpenID Connect) and records
+# where the package was built (provenance). A version that is already on npm is left alone, so a
+# release that was published by hand is never published twice.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write # trusted publishing and provenance
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+
+      - name: The tag must be the version in package.json
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          v="${TAG#v}"
+          case "$v" in *[!0-9.]*|"") echo "$TAG is not a release tag (v1.2.3)"; exit 1 ;; esac
+          pkg="$(node -p "require('./package.json').version")"
+          [ "$pkg" = "$v" ] || { echo "tag $TAG does not match package.json ($pkg)"; exit 1; }
+          if curl -fsS -o /dev/null "https://registry.npmjs.org/trouteai/$v"; then
+            echo "trouteai@$v is already on npm: nothing to publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install
+        if: steps.version.outputs.publish == 'true'
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        if: steps.version.outputs.publish == 'true'
+        run: npm run lint
+
+      # A throwaway data folder, so the build never reads or writes ~/.trouteai.
+      - name: Build
+        if: steps.version.outputs.publish == 'true'
+        run: DATA_DIR="$(mktemp -d)" npm run build
+
+      - name: Type check (no new errors)
+        if: steps.version.outputs.publish == 'true'
+        run: npm run typecheck:baseline
+
+      - name: Tests
+        if: steps.version.outputs.publish == 'true'
+        run: npm run test:all
+
+      # `npm publish` runs the release build first (prepack), then uploads the package.
+      - name: Publish to npm
+        if: steps.version.outputs.publish == 'true'
+        run: npm publish --access public

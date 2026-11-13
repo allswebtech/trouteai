@@ -1,0 +1,241 @@
+"use client";
+
+import { useEffect, useRef, useId } from "react";
+import { useTranslations } from "next-intl";
+import { cn } from "@/shared/utils/cn";
+import Button, { type ButtonVariant } from "./Button";
+
+// Preset for content-heavy modals: caps height on the OUTERMOST dialog
+// wrapper only (single scroll owner) and keeps the inner body plain (no
+// independent max-h/overflow), avoiding a double height cap that clips content.
+export const TALL_MODAL_PROPS = {
+  className: "max-h-[90vh] overflow-y-auto",
+  bodyClassName: "p-5",
+};
+
+interface ModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title?: React.ReactNode;
+  children?: React.ReactNode;
+  footer?: React.ReactNode;
+  size?: "sm" | "md" | "lg" | "xl" | "full";
+  closeOnOverlay?: boolean;
+  showCloseButton?: boolean;
+  className?: string;
+  bodyClassName?: string;
+  compactHeader?: boolean;
+  maxWidth?: string;
+}
+
+interface ConfirmModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void | Promise<void>;
+  title?: React.ReactNode;
+  message: React.ReactNode;
+  confirmText?: React.ReactNode;
+  cancelText?: React.ReactNode;
+  variant?: ButtonVariant;
+  loading?: boolean;
+}
+
+export default function Modal({
+  isOpen,
+  onClose,
+  title,
+  children,
+  footer,
+  size = "md",
+  closeOnOverlay = true,
+  showCloseButton = true,
+  className,
+  bodyClassName,
+  compactHeader = false,
+}: ModalProps) {
+  const t = useTranslations("common");
+  const titleId = useId();
+  const dialogRef = useRef(null);
+
+  const sizes = {
+    sm: "max-w-sm",
+    md: "max-w-md",
+    lg: "max-w-lg",
+    xl: "max-w-xl",
+    full: "max-w-4xl",
+  };
+
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [isOpen]);
+
+  // Handle escape key
+  useEffect(() => {
+    const handleEscape = (e) => {
+      if (e.key === "Escape" && isOpen) {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isOpen, onClose]);
+
+  // Focus trap
+  useEffect(() => {
+    if (!isOpen || !dialogRef.current) return;
+
+    const dialog = dialogRef.current;
+    const focusableSelector =
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+    // Focus first focusable element
+    const firstFocusable = dialog.querySelector(focusableSelector);
+    if (firstFocusable) {
+      setTimeout(() => firstFocusable.focus(), 50);
+    }
+
+    const handleTab = (e) => {
+      if (e.key !== "Tab") return;
+
+      const focusable = [...dialog.querySelectorAll(focusableSelector)];
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    dialog.addEventListener("keydown", handleTab);
+    return () => dialog.removeEventListener("keydown", handleTab);
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Overlay */}
+      <div
+        className="absolute inset-0 bg-black/40 dark:bg-black/60"
+        onClick={closeOnOverlay ? onClose : undefined}
+        aria-hidden="true"
+      />
+
+      {/* Modal content */}
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        className={cn(
+          "relative w-full bg-surface",
+          "border border-border",
+          "rounded-card shadow-elevated",
+          "animate-in fade-in duration-150",
+          sizes[size],
+          className
+        )}
+      >
+        {/* Header */}
+        {(title || showCloseButton) && (
+          <div
+            className={cn(
+              "flex items-center justify-between gap-3 border-b border-border",
+              compactHeader ? "px-4 py-2.5" : "px-5 py-4"
+            )}
+          >
+            <div className="flex items-center min-w-0">
+              {title && (
+                <h2
+                  id={titleId}
+                  className={cn(
+                    "font-semibold text-text-main truncate min-w-0",
+                    compactHeader ? "text-sm" : "text-base"
+                  )}
+                >
+                  {title}
+                </h2>
+              )}
+            </div>
+            {showCloseButton && (
+              <button
+                onClick={onClose}
+                aria-label={t("close")}
+                className="flex size-8 items-center justify-center rounded-control text-text-muted hover:bg-surface-2 hover:text-text-main transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+              >
+                <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                  close
+                </span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Body */}
+        <div className={bodyClassName ?? "p-5 max-h-[calc(80vh-140px)] overflow-y-auto text-sm"}>
+          {children}
+        </div>
+
+        {/* Footer */}
+        {footer && (
+          <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-3 border-t border-border">
+            {footer}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Confirm Modal helper
+export function ConfirmModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  title,
+  message,
+  confirmText,
+  cancelText,
+  variant = "danger",
+  loading = false,
+}: ConfirmModalProps) {
+  const t = useTranslations("common");
+  const resolvedTitle = title ?? t("confirmTitle");
+  const resolvedConfirmText = confirmText ?? t("confirmAction");
+  const resolvedCancelText = cancelText ?? t("cancel");
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={resolvedTitle}
+      size="sm"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={loading}>
+            {resolvedCancelText}
+          </Button>
+          <Button variant={variant} onClick={onConfirm} loading={loading}>
+            {resolvedConfirmText}
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-text-muted">{message}</p>
+    </Modal>
+  );
+}

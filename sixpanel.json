@@ -1,0 +1,39 @@
+{
+  "$schema": "https://installer.allsweb.net/sixpanel/sixpanel.schema.json",
+  "version": 1,
+  "name": "TRouteAI",
+  "kind": "node",
+  "source": {
+    "npm": "trouteai",
+    "version": "latest"
+  },
+  "runtime": {
+    "node": "26"
+  },
+  "start": "node --max-old-space-size=512 bin/trouteai.mjs",
+  "node": {
+    "mode": "server",
+    "processes": 1,
+    "memoryMb": 1024
+  },
+  "health": {
+    "path": "/healthz"
+  },
+  "keep": [".trouteai-data/"],
+  "env": {
+    "defaults": {
+      "DATA_DIR": ".trouteai-data",
+      "AUTH_COOKIE_SECURE": "true",
+      "TROUTEAI_TRUST_PROXY": "loopback",
+      "TROUTEAI_UPDATE_CHECK": "false",
+      "NODE_DISABLE_COMPILE_CACHE": "1"
+    },
+    "generate": ["JWT_SECRET", "API_KEY_SECRET", "STORAGE_ENCRYPTION_KEY"]
+  },
+  "web": {
+    "maxBodyMb": 64
+  },
+  "releases": {
+    "keep": 3
+  }
+}

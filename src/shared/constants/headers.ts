@@ -1,0 +1,17 @@
+export const TROUTEAI_RESPONSE_HEADERS = {
+  cache: "X-TRouteAI-Cache",
+  cacheHit: "X-TRouteAI-Cache-Hit",
+  compression: "X-TRouteAI-Compression",
+  costSaved: "X-TRouteAI-Cost-Saved",
+  decision: "X-TRouteAI-Decision",
+  fallbackAttempts: "X-TRouteAI-Fallback-Attempts",
+  latencyMs: "X-TRouteAI-Latency-Ms",
+  model: "X-TRouteAI-Model",
+  progress: "X-TRouteAI-Progress",
+  provider: "X-TRouteAI-Provider",
+  requestId: "X-TRouteAI-Request-Id",
+  responseCost: "X-TRouteAI-Response-Cost",
+  tokensIn: "X-TRouteAI-Tokens-In",
+  tokensOut: "X-TRouteAI-Tokens-Out",
+  version: "X-TRouteAI-Version",
+} as const;

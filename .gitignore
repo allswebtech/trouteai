@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build output
+.build/
+.next/
+dist/
+next-env.d.ts
+*.tsbuildinfo
+.eslintcache
+
+# Environment / secrets (keep only the template)
+.env*
+!.env.example
+*.api-key
+
+# Local data (SQLite, logs) if DATA_DIR points inside the project
+data/
+*.sqlite
+*.sqlite-*
+/logs/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# npm pack output
+*.tgz
+.npm-cache/
+
+# Local data of a deployed or test instance
+.trouteai-data/
+test-data/
+coverage/
+*.har
+*.pem
+*.key
+
+# Personal Claude Code files (shared ones live in .claude/ and CLAUDE.md)
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/worktrees/

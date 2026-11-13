@@ -1,0 +1,11 @@
+# Keeps the GitHub Actions used by the workflows current. Security fixes for npm packages come
+# as their own pull requests (Dependabot security updates); routine npm version bumps are done
+# by hand, because the runtime dependencies are pinned to the versions the release was built with.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "CI"

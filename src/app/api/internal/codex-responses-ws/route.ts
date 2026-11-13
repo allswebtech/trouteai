@@ -1,0 +1,451 @@
+import { NextResponse } from "next/server";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { z } from "zod";
+import { CodexExecutor } from "@trouteai/open-sse/executors/codex.ts";
+import { getApiKeyMetadata } from "@/lib/db/apiKeys";
+import { authorizeWebSocketHandshake, extractWsTokenFromRequest } from "@/lib/ws/handshake";
+import { getModelInfo } from "@/sse/services/model";
+import { resolveCcDiscoveryAliasStrip } from "@/lib/ccDiscoveryAliasResolve";
+import { getProviderCredentialsWithQuotaPreflight } from "@/sse/services/auth";
+import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
+import { checkAndRefreshToken } from "@/sse/services/tokenRefresh";
+import { resolveCodexWsModelInfo } from "./modelResolution";
+import { isFeatureFlagEnabled } from "@/shared/utils/featureFlags";
+import { sanitizeErrorMessage } from "@trouteai/open-sse/utils/error.ts";
+import { logger } from "@trouteai/open-sse/utils/logger.ts";
+import { resolveProxy } from "@trouteai/open-sse/utils/networkProxy.ts";
+import { proxyConfigToUrl } from "@trouteai/open-sse/utils/proxyDispatcher.ts";
+import {
+  attachReasoningRuleDirective,
+  applyReasoningRuleDirective,
+  extractReasoningIntent,
+  resolveReasoningSourceModels,
+  resolveReasoningRoutingRule,
+  validateCodexWsDecision,
+} from "@/lib/reasoningRouting/policy";
+import { resolveRequestRoutingTags } from "@/domain/tagRouter";
+import { validateApiKeyRoutingTarget } from "@/shared/utils/apiKeyPolicy";
+import { persistResponsesWsCallHistory } from "./history";
+import { applyResponsesWsCompression } from "./compression";
+
+const CODEX_RESPONSES_WS_URL = "wss://chatgpt.com/backend-api/codex/responses";
+const executor = new CodexExecutor();
+const log = logger("RESPONSES_WS");
+
+type JsonRecord = Record<string, unknown>;
+type ApiKeyMetadata = Awaited<ReturnType<typeof getApiKeyMetadata>>;
+
+const bridgePayloadSchema = z
+  .object({
+    action: z.string().optional(),
+    requestUrl: z.string().optional(),
+    headers: z.record(z.string(), z.unknown()).optional(),
+    response: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function getBridgeSecret(): string {
+  return process.env.TROUTEAI_WS_BRIDGE_SECRET || "";
+}
+
+function hashBridgeSecret(value: string): Buffer {
+  return createHash("sha256").update(value).digest();
+}
+
+export function bridgeSecretMatches(expectedSecret: string, receivedSecret: string): boolean {
+  if (!expectedSecret || !receivedSecret) return false;
+  const expectedHash = hashBridgeSecret(expectedSecret);
+  const receivedHash = hashBridgeSecret(receivedSecret);
+  return timingSafeEqual(expectedHash, receivedHash);
+}
+
+function getAuthRequest(body: JsonRecord): Request {
+  const requestUrl = typeof body.requestUrl === "string" ? body.requestUrl : "/api/v1/responses";
+  const headers = isRecord(body.headers) ? body.headers : {};
+  const url = new URL(requestUrl, "http://trouteai.local");
+  const requestHeaders = new Headers();
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (typeof value === "string") {
+      requestHeaders.set(key, value);
+    }
+  }
+
+  return new Request(url, { headers: requestHeaders });
+}
+
+function jsonError(status: number, code: string, message: string) {
+  return NextResponse.json(
+    {
+      error: {
+        code,
+        message,
+      },
+    },
+    { status }
+  );
+}
+
+function normalizeUpstreamHeaders(headers: Record<string, string>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const lower = key.toLowerCase();
+    if (
+      lower === "host" ||
+      lower === "connection" ||
+      lower === "upgrade" ||
+      lower === "sec-websocket-key" ||
+      lower === "sec-websocket-version" ||
+      lower === "sec-websocket-extensions"
+    ) {
+      continue;
+    }
+    result[key] = value;
+  }
+  result.Origin = "https://chatgpt.com";
+  return result;
+}
+
+async function authenticate(body: JsonRecord) {
+  const authRequest = getAuthRequest(body);
+  const auth = await authorizeWebSocketHandshake(authRequest);
+  if (!auth.authorized) {
+    return jsonError(
+      auth.hasCredential ? 403 : 401,
+      auth.hasCredential ? "ws_auth_invalid" : "ws_auth_required",
+      auth.hasCredential ? "Invalid WebSocket credential" : "WebSocket auth required"
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    authenticated: auth.authenticated,
+    authType: auth.authType,
+    wsAuth: auth.wsAuth,
+  });
+}
+
+/**
+ * The WS bridge authenticates the API key (see `authenticate()`) but
+ * historically never enforced the API-key model/combo policy the HTTP
+ * `/v1/responses` path enforces via `enforceApiKeyPolicy()` — a key
+ * restricted to `allowedModels`/`allowedCombos` could still reach a direct
+ * Codex model through this transport. The bridge's token arrives via query
+ * params, not a normal Authorization header, so this builds an equivalent
+ * Request carrying the extracted bearer token and evaluates policy against
+ * the CLIENT-requested model, before any Codex-specific remapping.
+ */
+async function enforceCodexWsApiKeyPolicy(
+  authRequest: Request,
+  apiKey: string | null,
+  requestedModel: string
+): Promise<{ rejection: Response | null; apiKeyInfo: ApiKeyMetadata | null }> {
+  const policyHeaders = new Headers(authRequest.headers);
+  if (apiKey) policyHeaders.set("Authorization", `Bearer ${apiKey}`);
+  const policyRequest = new Request(authRequest.url, { headers: policyHeaders });
+  const policy = await enforceApiKeyPolicy(policyRequest, requestedModel);
+  return { rejection: policy.rejection, apiKeyInfo: policy.apiKeyInfo };
+}
+
+async function prepareReasoningRoute(
+  authRequest: Request,
+  apiKey: string | null,
+  metadata: ApiKeyMetadata | null,
+  requestedModel: string,
+  responseBody: JsonRecord
+) {
+  const reasoningIntent = extractReasoningIntent(requestedModel, responseBody);
+  const sourceModels = await resolveReasoningSourceModels(reasoningIntent.model, (model) =>
+    resolveCodexWsModelInfo(model, getModelInfo)
+  );
+  reasoningIntent.model = sourceModels.normalized;
+  const routingTags = resolveRequestRoutingTags(responseBody);
+  const routeInput = {
+    sourceModel: reasoningIntent.model,
+    sourceModelAliases: sourceModels.aliases,
+    sourceEffort: reasoningIntent.sourceEffort,
+    hasReasoningSignal: reasoningIntent.hasReasoningSignal,
+    hasThinkingBudget: reasoningIntent.hasThinkingBudget,
+    apiKeyId: metadata?.id ?? null,
+    requestTags: routingTags.tags,
+  };
+  let decision = await resolveReasoningRoutingRule(routeInput);
+  if (decision) {
+    const transportError = validateCodexWsDecision(decision);
+    if (transportError)
+      return { error: jsonError(400, "reasoning_route_transport", transportError) };
+    if (decision.capability === "unsupported") {
+      return {
+        error: jsonError(
+          400,
+          "reasoning_effort_unsupported",
+          "The configured reasoning effort is not supported by the target model"
+        ),
+      };
+    }
+    const rejection = await validateApiKeyRoutingTarget(
+      authRequest,
+      apiKey,
+      metadata,
+      decision.targetModel
+    );
+    if (rejection) return { error: rejection };
+  }
+  return { decision, intent: reasoningIntent, sourceModels, routingTags };
+}
+
+async function resolveCodexCredentials(
+  provider: string,
+  model: string,
+  allowedConnections: string[] | null
+) {
+  const credentials = await getProviderCredentialsWithQuotaPreflight(
+    provider,
+    null,
+    allowedConnections,
+    model
+  );
+  if (!credentials || "allRateLimited" in credentials) {
+    return {
+      error: jsonError(
+        503,
+        "codex_credentials_unavailable",
+        "No available Codex OAuth connection for Responses WebSocket"
+      ),
+    };
+  }
+  const refreshed = await checkAndRefreshToken(provider, credentials);
+  if (!refreshed?.accessToken) {
+    return {
+      error: jsonError(401, "codex_oauth_token_missing", "Codex OAuth access token is missing"),
+    };
+  }
+  return { credentials: refreshed };
+}
+
+async function resolveCodexRequestContext(body: JsonRecord) {
+  if (!isFeatureFlagEnabled("TROUTEAI_CODEX_WS_ENABLED")) {
+    return {
+      error: jsonError(503, "codex_ws_disabled", "Codex Responses WebSocket transport is disabled"),
+    };
+  }
+  const authResponse = await authenticate(body);
+  if (!authResponse.ok) return { error: authResponse };
+
+  const authRequest = getAuthRequest(body);
+  const apiKey = extractWsTokenFromRequest(authRequest);
+  const responseBody = isRecord(body.response) ? body.response : {};
+  const rawRequestedModel =
+    typeof responseBody.model === "string" && responseBody.model.trim()
+      ? responseBody.model.trim()
+      : "gpt-5.5";
+  // cc discovery alias (`claude/<provider>/<model>`, `claude/combo/<name>`):
+  // resolve back to the real id before provider/policy resolution — the shared
+  // resolver used by src/sse/handlers/chat.ts. This WS bridge never goes through
+  // handleChat, so without this a Claude Code client selecting a mirrored model
+  // over the Codex Responses WS transport would fail as an unknown model.
+  const ccAliasStrip = await resolveCcDiscoveryAliasStrip(rawRequestedModel);
+  const requestedModel = ccAliasStrip.stripped ? ccAliasStrip.model : rawRequestedModel;
+  const policyResult = await enforceCodexWsApiKeyPolicy(authRequest, apiKey, requestedModel);
+  if (policyResult.rejection) return { error: policyResult.rejection };
+  const metadata =
+    policyResult.apiKeyInfo ?? (apiKey ? await getApiKeyMetadata(apiKey).catch(() => null) : null);
+  const allowedConnections =
+    metadata && Array.isArray(metadata.allowedConnections) && metadata.allowedConnections.length > 0
+      ? metadata.allowedConnections
+      : null;
+  const reasoningRoute = await prepareReasoningRoute(
+    authRequest,
+    apiKey,
+    metadata,
+    requestedModel,
+    responseBody
+  );
+  if (reasoningRoute.error) return { error: reasoningRoute.error };
+  return {
+    authRequest,
+    apiKey,
+    responseBody,
+    requestedModel,
+    metadata,
+    allowedConnections,
+    ...reasoningRoute,
+  };
+}
+
+async function resolveCodexUpstreamContext(
+  context: Awaited<ReturnType<typeof resolveCodexRequestContext>>
+) {
+  if ("error" in context) return context;
+  const routedModel = context.decision?.targetModel ?? context.requestedModel;
+  const modelInfo = await resolveCodexWsModelInfo(routedModel, getModelInfo);
+  const provider = modelInfo.provider;
+  const model = modelInfo.model || context.requestedModel;
+  if (provider !== "codex") {
+    return {
+      error: jsonError(
+        400,
+        "codex_ws_provider_required",
+        `Responses WebSocket bridge only supports Codex models, got ${provider || "unknown"}`
+      ),
+    };
+  }
+  const credentialResult = await resolveCodexCredentials(
+    provider,
+    model,
+    context.allowedConnections
+  );
+  if (credentialResult.error) return credentialResult;
+  let reasoningDecision = context.decision;
+  if (!reasoningDecision) {
+    reasoningDecision = await resolveReasoningRoutingRule({
+      sourceModel: context.intent.model,
+      sourceModelAliases: context.sourceModels.aliases,
+      sourceEffort: context.intent.sourceEffort,
+      hasReasoningSignal: context.intent.hasReasoningSignal,
+      hasThinkingBudget: context.intent.hasThinkingBudget,
+      apiKeyId: context.metadata?.id ?? null,
+      connectionId: credentialResult.credentials.connectionId,
+      requestTags: context.routingTags.tags,
+      connectionOnly: true,
+      capabilityModel: `codex/${model}`,
+    });
+    if (reasoningDecision?.capability === "unsupported") {
+      return {
+        error: jsonError(
+          400,
+          "reasoning_effort_unsupported",
+          "The configured reasoning effort is not supported by the selected Codex connection model"
+        ),
+      };
+    }
+  }
+  return {
+    ...context,
+    provider,
+    model,
+    credentials: credentialResult.credentials,
+    reasoningDecision,
+  };
+}
+
+async function resolveCodexProxy(provider: string): Promise<string | undefined> {
+  try {
+    return proxyConfigToUrl(await resolveProxy(provider)) || undefined;
+  } catch (err) {
+    logger.warn(`[codex-responses-ws] proxy resolution failed: ${sanitizeErrorMessage(err)}`);
+    return undefined;
+  }
+}
+
+async function prepare(body: JsonRecord) {
+  const context = await resolveCodexRequestContext(body);
+  if ("error" in context) return context.error;
+  const upstream = await resolveCodexUpstreamContext(context);
+  if ("error" in upstream) return upstream.error;
+  const { responseBody, provider, model, credentials: refreshedCredentials } = upstream;
+  const reasoningDecision = upstream.reasoningDecision;
+
+  let requestBody: JsonRecord = responseBody;
+  let reasoningRouting: JsonRecord | null = null;
+  if (reasoningDecision) {
+    const withDirective = attachReasoningRuleDirective(requestBody, reasoningDecision);
+    reasoningRouting = isRecord(withDirective._trouteaiReasoningRouteTrace)
+      ? withDirective._trouteaiReasoningRouteTrace
+      : null;
+    requestBody = applyReasoningRuleDirective(withDirective) as JsonRecord;
+    delete requestBody._trouteaiReasoningRouteTrace;
+  }
+  // The WS bridge previously skipped the whole prompt-compression pipeline that the
+  // HTTP/SSE path (chatCore.ts) runs on every request — wire the same core pipeline in here,
+  // per logical turn, before handing off to the executor.
+  requestBody = await applyResponsesWsCompression(requestBody, {
+    provider,
+    model,
+    requestId: randomUUID(),
+  });
+  const transformed = (await executor.transformRequest(
+    model,
+    requestBody,
+    true,
+    refreshedCredentials
+  )) as JsonRecord;
+  transformed.model = model;
+  delete transformed.stream;
+  delete transformed.stream_options;
+
+  const headers = normalizeUpstreamHeaders(executor.buildHeaders(refreshedCredentials, true));
+
+  // Apply the configured Global/provider proxy to the upstream Codex
+  // Responses WebSocket too. The downstream client→TRouteAI hop works, but the
+  // upstream wreq-js.websocket() connect previously ignored the Proxy Registry,
+  // so a no-direct-egress container failed with a DNS lookup error.
+  const proxy = await resolveCodexProxy(provider);
+
+  return NextResponse.json({
+    ok: true,
+    upstreamUrl: CODEX_RESPONSES_WS_URL,
+    // chrome_149 does not exist in wreq-js 2.3.1 (max chrome_147) → the
+    // native layer yields a degenerate TLS fingerprint and ChatGPT rejects the
+    // upgrade ("Invalid JSON body"). chrome_142 is the profile that shipped earlier
+    // and is confirmed working against this upstream.
+    browser: "chrome_142",
+    os: "windows",
+    connectionId: refreshedCredentials.connectionId,
+    provider,
+    account: refreshedCredentials.email || null,
+    model,
+    headers,
+    proxy,
+    reasoningRouting,
+    response: transformed,
+  });
+}
+
+export async function POST(request: Request) {
+  const expectedSecret = getBridgeSecret();
+  const receivedSecret = request.headers.get("x-trouteai-ws-bridge-secret") || "";
+  if (!bridgeSecretMatches(expectedSecret, receivedSecret)) {
+    return jsonError(403, "internal_bridge_forbidden", "Forbidden");
+  }
+
+  let body: JsonRecord;
+  try {
+    const parsed = bridgePayloadSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return jsonError(400, "invalid_json", "Request body must be a JSON object");
+    }
+    body = parsed.data as JsonRecord;
+  } catch {
+    return jsonError(400, "invalid_json", "Request body must be JSON");
+  }
+
+  const action = typeof body.action === "string" ? body.action : "";
+  if (action === "authenticate") {
+    return authenticate(body);
+  }
+  if (action === "prepare") {
+    return prepare(body);
+  }
+  if (action === "log") {
+    try {
+      return await persistResponsesWsCallHistory(body);
+    } catch (error) {
+      return jsonError(
+        500,
+        "responses_ws_history_log_failed",
+        sanitizeErrorMessage(error instanceof Error ? error.message : String(error))
+      );
+    }
+  }
+
+  return jsonError(400, "invalid_action", "Unsupported bridge action");
+}
