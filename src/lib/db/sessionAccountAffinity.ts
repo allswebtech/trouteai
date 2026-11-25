@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 
 import { getDbInstance } from "./core";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 type SessionAccountAffinityRecord = {
   connectionId: string;
@@ -12,7 +13,7 @@ type SessionAccountAffinityRecord = {
 const NAMESPACE = "session_account_affinity";
 const CLEANUP_INTERVAL_MS = 5 * 60_000;
 
-let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+let cleanupTimer: (() => void) | null = null;
 
 function normalizePositiveTtl(ttlMs: number | null | undefined): number {
   return Number.isFinite(ttlMs) && Number(ttlMs) > 0 ? Number(ttlMs) : 0;
@@ -195,18 +196,23 @@ export function startSessionAccountAffinityCleanup(): void {
     console.warn("[SESSION_AFFINITY] Startup cleanup failed:", error);
   }
 
-  cleanupTimer = setInterval(() => {
-    try {
-      cleanupStaleSessionAccountAffinities();
-    } catch (error) {
-      console.warn("[SESSION_AFFINITY] Periodic cleanup failed:", error);
-    }
-  }, CLEANUP_INTERVAL_MS);
-  if (typeof cleanupTimer === "object" && "unref" in cleanupTimer) cleanupTimer.unref?.();
+  // Pauses while the server is idle: affinities are only written by requests, and a read checks
+  // the expiry itself.
+  cleanupTimer = setIdleAwareInterval(
+    "session-affinity-cleanup",
+    () => {
+      try {
+        cleanupStaleSessionAccountAffinities();
+      } catch (error) {
+        console.warn("[SESSION_AFFINITY] Periodic cleanup failed:", error);
+      }
+    },
+    CLEANUP_INTERVAL_MS
+  );
 }
 
 export function stopSessionAccountAffinityCleanupForTests(): void {
   if (!cleanupTimer) return;
-  clearInterval(cleanupTimer);
+  cleanupTimer();
   cleanupTimer = null;
 }

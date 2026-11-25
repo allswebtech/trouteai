@@ -19,6 +19,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60 * 1000;
@@ -74,7 +75,7 @@ let maxTotalDevices = parsePositiveIntegerEnv(MAX_TOTAL_ENV_NAME, DEFAULT_MAX_TO
 // key: apiKeyId → Map<fingerprint, DeviceRecord>
 const devicesByApiKey = new Map<string, Map<string, DeviceRecord>>();
 
-let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+let cleanupTimer: (() => void) | null = null;
 
 /**
  * Mask an IP address so the stored/reported value never reveals the full
@@ -177,10 +178,8 @@ export function expireDevices(now: number = Date.now()): number {
 
 function ensureCleanupTimer(): void {
   if (cleanupTimer) return;
-  cleanupTimer = setInterval(() => {
-    expireDevices();
-  }, CLEANUP_INTERVAL_MS);
-  cleanupTimer.unref?.();
+  // Pauses while the server is idle: devices are only seen on requests.
+  cleanupTimer = setIdleAwareInterval("device-tracker-sweep", expireDevices, CLEANUP_INTERVAL_MS);
 }
 
 ensureCleanupTimer();

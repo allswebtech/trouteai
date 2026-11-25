@@ -1,4 +1,4 @@
-import { handleChat } from "@/sse/handlers/chat";
+import { buildClientRawRequest, handleChat } from "@/sse/handlers/chat";
 import {
   withEarlyStreamKeepalive,
   RESPONSES_STARTUP_THINKING_FRAME,
@@ -8,7 +8,11 @@ import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 import { resolveResponsesApiModel } from "@/app/api/internal/codex-responses-ws/modelResolution";
 import { getModelInfo } from "@/sse/services/model";
 import { getComboByName } from "@/lib/db/combos";
-import { resolveKeepaliveThreshold } from "@trouteai/open-sse/utils/keepaliveThreshold";
+import {
+  resolveKeepaliveThreshold,
+  resolveStreamFlagKeepaliveThreshold,
+} from "@trouteai/open-sse/utils/keepaliveThreshold";
+import { bodyRequestsStream } from "@trouteai/open-sse/utils/aiSdkCompat.ts";
 
 // NOTE: We do NOT call initTranslators() here — the translator registry is
 // bootstrapped at module level inside open-sse/translator/index.ts when it
@@ -43,7 +47,7 @@ export async function OPTIONS() {
 export async function withCodexPreferredModel(
   request: Request,
   preParsedBody: any = null
-): Promise<{ request: Request; body: any }> {
+): Promise<{ request: Request; body: any; clientBody?: any }> {
   try {
     const body =
       preParsedBody ??
@@ -70,6 +74,8 @@ export async function withCodexPreferredModel(
         signal: request.signal,
       }),
       body: rewrittenBody,
+      // the body as the client sent it: the answer is reported and echoed under that name
+      clientBody: body,
     };
   } catch {
     return { request, body: preParsedBody };
@@ -88,25 +94,46 @@ async function postHandler(request: any, context: any, preParsedBody: any = null
   // client drops the connection if no bytes arrive within ~5s. Keep the connection
   // warm with early keepalives while the upstream produces its first token.
   // Non-streaming callers (JSON) keep the original verbatim path untouched.
-  const { request: resolved, body: resolvedBody } = await withCodexPreferredModel(
-    request,
-    preParsedBody
-  );
+  const {
+    request: resolved,
+    body: resolvedBody,
+    clientBody,
+  } = await withCodexPreferredModel(request, preParsedBody);
+  // After a rewrite to codex/<name>, the client still asked for <name>: the requested-model
+  // header, the log and the body's echo use the string it sent.
+  const clientRawRequest = clientBody ? buildClientRawRequest(request, clientBody) : null;
+  // Whether the answer is a stream is decided by the body's `stream` field alone (see
+  // resolveStreamFlag). The wrapper is used only when the body asks for a stream AND the
+  // Accept header names text/event-stream: after its first frame the answer is a 200 for
+  // good, so a later failure (a 429, a 402, a 5xx) could only be an error event. Without
+  // that Accept the client keeps the real HTTP status and its headers.
   const accept = String(request.headers?.get?.("accept") || "").toLowerCase();
-  if (accept.includes("text/event-stream")) {
+  if (bodyRequestsStream(resolvedBody) && accept.includes("text/event-stream")) {
     // Adaptive threshold: web-session and anonymous-fallback providers are slower
     // to produce the first byte, so use a longer keepalive threshold (15s vs 2s).
     // Reuse resolvedBody.model — no extra clone/parse needed.
     const model = resolvedBody?.model;
     const thresholdMs = resolveKeepaliveThreshold(model);
-    return await withEarlyStreamKeepalive(handleChat(resolved, null, resolvedBody), {
+    return await withEarlyStreamKeepalive(handleChat(resolved, clientRawRequest, resolvedBody), {
       signal: request.signal,
       thresholdMs,
       startupFrame: RESPONSES_STARTUP_THINKING_FRAME,
       errorFrame: OPENAI_RESPONSES_ERROR_FRAME,
     });
   }
-  return await handleChat(resolved, null, resolvedBody);
+  // `stream: true` without an SSE Accept header: see resolveStreamFlagKeepaliveThreshold.
+  const streamFlagThreshold = bodyRequestsStream(resolvedBody)
+    ? resolveStreamFlagKeepaliveThreshold(resolvedBody?.model)
+    : null;
+  if (streamFlagThreshold !== null) {
+    return await withEarlyStreamKeepalive(handleChat(resolved, clientRawRequest, resolvedBody), {
+      signal: request.signal,
+      thresholdMs: streamFlagThreshold,
+      startupFrame: RESPONSES_STARTUP_THINKING_FRAME,
+      errorFrame: OPENAI_RESPONSES_ERROR_FRAME,
+    });
+  }
+  return await handleChat(resolved, clientRawRequest, resolvedBody);
 }
 
 export const POST = withInjectionGuard(postHandler);

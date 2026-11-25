@@ -3,6 +3,42 @@
 What changed in each TRouteAI release. Update with `trouteai update`; on a hosting panel,
 deploy again.
 
+## 1.0.10 (2026-11-25): steady under load, honest answers, the prompt cache kept
+
+### Under many requests at once
+
+- **A round-robin combo waits fairly instead of refusing.** Requests for a combo whose accounts are all busy wait
+  in one queue for the first free slot (up to two minutes), then get a clear "busy" answer with the seconds to
+  wait. Before, a request could be refused while a slot was free. A request can carry the header
+  `x-trouteai-priority` to wait in front.
+- **A new conversation starts on the least busy account** that can be used, and keeps that account, so the
+  provider's own cache keeps working. Before, one account could carry most conversations while others idled.
+- **A provider's "high load" answer** is tried again only when nothing of the answer had been sent yet; a
+  conversation stays on its account. The account is no longer marked unavailable for it.
+- An account of a round-robin combo is used again as soon as its usage limit resets.
+- **The runtime page shows what runs and what it costs**: per account and per API key, live.
+
+### The prompt cache
+
+- Clients that speak the OpenAI chat or Responses dialect to the Claude API-key provider keep the prompt cache,
+  and every dialect is told how much was read from and written to the cache.
+
+### Answers you can rely on
+
+- A request gets the model it asked for or a clear error; response headers name who answered and whether a
+  fallback happened. `count_tokens` returns its own count or a labelled estimate. A missing or false `stream`
+  flag returns one JSON answer in every dialect. `/v1/models` lists only what routes, with limits and
+  capabilities. An image reaches every model that can see it.
+- A usage limit is a 429 with its reset time; an outage is a 5xx, never a 429.
+
+### Security and running
+
+- The command key is a secret file only you can read, no longer derived from a machine id. TRouteAI listens on
+  this computer only unless you choose otherwise, accepts both API key headers, shuts down cleanly, and runs
+  nothing while idle that need not run.
+
+Updating from 1.0.9 changes nothing in your providers, keys and combos.
+
 ## 1.0.9 (2026-11-13): first stable release
 
 TRouteAI is now **stable**, and its source code is public at

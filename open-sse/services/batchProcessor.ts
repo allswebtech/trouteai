@@ -20,9 +20,10 @@ import {
 import { dispatch } from "@/lib/batches/dispatch";
 import type { SupportedBatchEndpoint } from "@/shared/constants/batchEndpoints";
 import { DEFAULT_BATCH_EXPIRATION_SECONDS } from "@/shared/constants/batch";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 let isProcessing: boolean = false;
-let pollInterval: NodeJS.Timeout | null = null;
+let stopPolling: (() => void) | null = null;
 const activeProcesses = new Set<Promise<void>>();
 const activeBatches = new Set<string>();
 const DEFAULT_BATCH_WINDOW_SECONDS: number = 24 * 60 * 60;
@@ -44,27 +45,36 @@ interface BatchRequestItem {
 }
 
 export function initBatchProcessor() {
-  if (pollInterval) return pollInterval;
+  if (stopPolling) return;
   console.log("[BATCH] Initializing batch processor polling...");
 
-  pollInterval = setInterval(async (): Promise<void> => {
-    if (isProcessing) return;
-    try {
-      isProcessing = true;
-      await processPendingBatches();
-    } catch (err) {
-      console.error("[BATCH] Polling error:", err);
-    } finally {
-      isProcessing = false;
+  // Poll every 10 s. Batches are created and cancelled by requests, so with no batch pending
+  // the poll pauses while the server is idle and starts again on the next request; expired
+  // batch files are then removed on that request's first poll.
+  stopPolling = setIdleAwareInterval(
+    "batch-processor",
+    async (): Promise<void> => {
+      if (isProcessing) return;
+      try {
+        isProcessing = true;
+        await processPendingBatches();
+      } catch (err) {
+        console.error("[BATCH] Polling error:", err);
+      } finally {
+        isProcessing = false;
+      }
+    },
+    10_000,
+    {
+      canPause: () => !isProcessing && activeBatches.size === 0 && getPendingBatches().length === 0,
     }
-  }, 10000).unref(); // Poll every 10s; unref'd so it never keeps the process alive
-  return pollInterval;
+  );
 }
 
 export function stopBatchProcessor(): void {
-  if (pollInterval) {
-    clearInterval(pollInterval);
-    pollInterval = null;
+  if (stopPolling) {
+    stopPolling();
+    stopPolling = null;
     console.log("[BATCH] Stopped batch processor polling.");
   }
 }

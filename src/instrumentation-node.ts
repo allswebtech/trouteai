@@ -521,10 +521,14 @@ export async function registerNodejs(): Promise<void> {
     console.warn("[STARTUP] Could not initialize vacuum scheduler (non-fatal):", msg);
   }
 
-  // Warm the model catalog's durable, apiKey-independent sub-caches at
-  // startup — see warmModelCatalogCache() for why the top-level Response
-  // cache alone doesn't deliver this. Fire-and-forget, non-fatal.
-  void warmModelCatalogCache();
+  // Warm the model catalog's durable, apiKey-independent sub-caches — see
+  // warmModelCatalogCache() for why the top-level Response cache alone doesn't
+  // deliver this. Fire-and-forget, non-fatal. A server nobody uses yet is idle,
+  // so the warm-up runs beside the first request instead of at boot: an unused
+  // server then makes no outbound call and does not hold the memory the build
+  // of the full model list takes.
+  const { runUnlessIdle } = await import("@/lib/idleState");
+  runUnlessIdle("model-catalog-warmup", warmModelCatalogCache);
 
   if (!isBackgroundServicesDisabled()) {
     // All services are independent — run in parallel for faster cold start.

@@ -26,11 +26,19 @@ export async function POST(request) {
 
   const clonedReq = request.clone();
   let modelName = "llama3.2";
+  let body: Record<string, unknown> | null = null;
   try {
-    const body = await clonedReq.json();
-    modelName = body.model || "llama3.2";
+    const parsed = await clonedReq.json();
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      body = parsed;
+      modelName = (typeof parsed.model === "string" && parsed.model) || "llama3.2";
+    }
   } catch {}
 
-  const response = await handleChat(request);
+  // The Ollama chat API streams unless the body says `stream: false`, the opposite of the
+  // OpenAI default the pipeline applies. Make that default explicit so the pipeline streams.
+  if (body && body.stream === undefined) body = { ...body, stream: true };
+
+  const response = await handleChat(request, null, body);
   return transformToOllama(response, modelName);
 }

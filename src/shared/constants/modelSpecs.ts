@@ -261,11 +261,14 @@ export const MODEL_SPECS: Record<string, ModelSpec> = {
     supportsThinking: true,
     supportsTools: true,
     supportsVision: true,
+    // The dotted id is the one Kiro's model list and the `anthropic` registry use.
+    aliases: ["claude-opus-4.5"],
   },
 
   // ── Claude Sonnet 4.6 ───────────────────────────────────────────
   "claude-sonnet-4-6": {
-    maxOutputTokens: 64000,
+    // Anthropic's model table: 1M context, 128K output.
+    maxOutputTokens: 128000,
     contextWindow: 1000000,
     thinkingBudgetCap: 62000,
     supportsThinking: true,
@@ -377,6 +380,107 @@ export const MODEL_SPECS: Record<string, ModelSpec> = {
     supportsTools: true,
     supportsVision: true,
     aliases: ["claude-sonnet-4.5"],
+  },
+
+  // ── Current Claude models (Anthropic's model table): 1M context, 128K output, adaptive
+  // thinking only (budget_tokens is a 400). Opus 5.5, Sonnet 5.5 and Fable 5.x also refuse
+  // thinking "disabled"; Haiku 5.5 accepts it only up to effort high.
+  "claude-opus-5-5": {
+    maxOutputTokens: 128000,
+    contextWindow: 1000000,
+    defaultThinkingBudget: 32000,
+    thinkingBudgetCap: 120000,
+    supportsThinking: true,
+    supportsTools: true,
+    supportsVision: true,
+    adaptiveThinkingOnly: true,
+    rejectsThinkingDisabled: true,
+    aliases: BEDROCK_CLAUDE_ALIASES("claude-opus-5-5", "claude-opus-5.5"),
+  },
+  "claude-sonnet-5-5": {
+    maxOutputTokens: 128000,
+    contextWindow: 1000000,
+    defaultThinkingBudget: 32000,
+    thinkingBudgetCap: 120000,
+    supportsThinking: true,
+    supportsTools: true,
+    supportsVision: true,
+    adaptiveThinkingOnly: true,
+    rejectsThinkingDisabled: true,
+    aliases: BEDROCK_CLAUDE_ALIASES("claude-sonnet-5-5", "claude-sonnet-5.5"),
+  },
+  "claude-fable-5-1": {
+    maxOutputTokens: 128000,
+    contextWindow: 1000000,
+    defaultThinkingBudget: 32000,
+    thinkingBudgetCap: 120000,
+    supportsThinking: true,
+    supportsTools: true,
+    supportsVision: true,
+    adaptiveThinkingOnly: true,
+    rejectsThinkingDisabled: true,
+    aliases: BEDROCK_CLAUDE_ALIASES("claude-fable-5-1", "claude-fable-5.1"),
+  },
+  "claude-fable-5-2": {
+    maxOutputTokens: 128000,
+    contextWindow: 1000000,
+    defaultThinkingBudget: 32000,
+    thinkingBudgetCap: 120000,
+    supportsThinking: true,
+    supportsTools: true,
+    supportsVision: true,
+    adaptiveThinkingOnly: true,
+    rejectsThinkingDisabled: true,
+    aliases: BEDROCK_CLAUDE_ALIASES("claude-fable-5-2", "claude-fable-5.2"),
+  },
+  // Mythos models share the API surface of the Fable model of the same version.
+  "claude-mythos-5": {
+    maxOutputTokens: 128000,
+    contextWindow: 1000000,
+    defaultThinkingBudget: 32000,
+    thinkingBudgetCap: 120000,
+    supportsThinking: true,
+    supportsTools: true,
+    supportsVision: true,
+    adaptiveThinkingOnly: true,
+    rejectsThinkingDisabled: true,
+    aliases: BEDROCK_CLAUDE_ALIASES("claude-mythos-5", "claude-mythos-5"),
+  },
+  "claude-mythos-5-1": {
+    maxOutputTokens: 128000,
+    contextWindow: 1000000,
+    defaultThinkingBudget: 32000,
+    thinkingBudgetCap: 120000,
+    supportsThinking: true,
+    supportsTools: true,
+    supportsVision: true,
+    adaptiveThinkingOnly: true,
+    rejectsThinkingDisabled: true,
+    aliases: BEDROCK_CLAUDE_ALIASES("claude-mythos-5-1", "claude-mythos-5.1"),
+  },
+  "claude-mythos-5-2": {
+    maxOutputTokens: 128000,
+    contextWindow: 1000000,
+    defaultThinkingBudget: 32000,
+    thinkingBudgetCap: 120000,
+    supportsThinking: true,
+    supportsTools: true,
+    supportsVision: true,
+    adaptiveThinkingOnly: true,
+    rejectsThinkingDisabled: true,
+    aliases: BEDROCK_CLAUDE_ALIASES("claude-mythos-5-2", "claude-mythos-5.2"),
+  },
+  "claude-haiku-5-5": {
+    maxOutputTokens: 128000,
+    contextWindow: 1000000,
+    defaultThinkingBudget: 32000,
+    thinkingBudgetCap: 120000,
+    supportsThinking: true,
+    supportsTools: true,
+    supportsVision: true,
+    adaptiveThinkingOnly: true,
+    maxEffortWhenThinkingDisabled: "high",
+    aliases: BEDROCK_CLAUDE_ALIASES("claude-haiku-5-5", "claude-haiku-5.5"),
   },
 
   // ── Claude Haiku 4.5 ────────────────────────────────────────────
@@ -657,30 +761,61 @@ export function getAuthoritativeProviderContextWindow(
   return AUTHORITATIVE_PROVIDER_CONTEXT_WINDOWS.get(key) ?? null;
 }
 
+/** Providers that speak Anthropic's own Messages API, where the per-model rules below hold. */
+const DIRECT_ANTHROPIC_PROVIDERS = new Set(["anthropic", "claude"]);
+
 /**
  * Normalize a request's `thinking` field against the (possibly combo-substituted) target model.
  *
  * A combo/route can swap the upstream model AFTER the client already chose its `thinking`
- * value. Claude Code sends `thinking:{type:"disabled"}` for internal title/name-generation
- * calls — valid for opus/sonnet, but claude-fable-5 defaults to adaptive thinking and rejects
- * `type:"disabled"` with an upstream 400. When the resolved target model is flagged
- * `rejectsThinkingDisabled`, drop the now-invalid `thinking` so the model uses its adaptive
- * default instead of hard-failing. Models that accept `disabled` are left untouched, and any
- * non-`disabled` thinking (enabled/adaptive) is always preserved.
+ * value, and Claude Code sends `thinking:{type:"disabled"}` for its internal helper calls.
+ * For a model flagged `rejectsThinkingDisabled` that value is a 400.
+ *
+ * On Anthropic's own API (`provider` anthropic or claude) the request still asks for no
+ * thinking, so it gets what the API reference recommends for that model instead:
+ *   - Sonnet 5.5: `{type: "between_tools"}` (no other field), effort at most high;
+ *   - Fable 5.x, Mythos, Opus 5.5 (thinking is always on): no `thinking`, effort "low".
+ * `between_tools` is Sonnet 5.5's own value; sent to another model it is read as that model's
+ * "off". Other providers keep the earlier rule: the refused value is dropped.
  */
 export function normalizeThinkingForModel<T extends Record<string, unknown>>(
   body: T,
-  modelId: string
+  modelId: string,
+  provider?: string | null
 ): T {
   const thinking = body?.thinking as Record<string, unknown> | undefined;
-  if (
-    thinking &&
-    typeof thinking === "object" &&
-    thinking.type === "disabled" &&
-    getModelSpec(modelId)?.rejectsThinkingDisabled
-  ) {
-    const { thinking: _omitted, ...rest } = body as Record<string, unknown>;
-    return rest as T;
+  if (!thinking || typeof thinking !== "object") return body;
+  const direct = !!provider && DIRECT_ANTHROPIC_PROVIDERS.has(provider);
+  const spec = getModelSpec(modelId);
+  const bareId = String(modelId || "")
+    .toLowerCase()
+    .replace(/^.*\//, "");
+  const isSonnet55 = getCanonicalModelSpecId(bareId) === "claude-sonnet-5-5";
+  const askedOff = thinking.type === "disabled" || (direct && thinking.type === "between_tools");
+  if (!askedOff) return body;
+
+  const record = { ...(body as Record<string, unknown>) };
+  const outputConfig =
+    record.output_config && typeof record.output_config === "object"
+      ? { ...(record.output_config as Record<string, unknown>) }
+      : null;
+
+  if (direct && isSonnet55) {
+    record.thinking = { type: "between_tools" };
+    const effort = String(outputConfig?.effort || "").toLowerCase();
+    if (outputConfig && (effort === "xhigh" || effort === "max")) {
+      record.output_config = { ...outputConfig, effort: "high" };
+    }
+    return record as T;
+  }
+  if (spec?.rejectsThinkingDisabled) {
+    delete record.thinking;
+    if (direct) record.output_config = { ...(outputConfig || {}), effort: "low" };
+    return record as T;
+  }
+  if (direct && thinking.type === "between_tools") {
+    record.thinking = { type: "disabled" };
+    return record as T;
   }
   return body;
 }

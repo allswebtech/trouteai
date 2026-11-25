@@ -25,6 +25,7 @@ import { registerMonitorFetcher } from "./quotaMonitor.ts";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -117,18 +118,20 @@ interface CacheEntry {
 const quotaCache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 60_000; // 60 seconds — matches codexQuotaFetcher
 
-const _cacheCleanup = setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of quotaCache) {
-    if (now - entry.fetchedAt > CACHE_TTL_MS * 5) {
-      quotaCache.delete(key);
+// Pauses while the server is idle: entries are only added by requests, and the next request
+// runs the sweep again.
+setIdleAwareInterval(
+  "grokQuotaFetcher-sweep",
+  () => {
+    const now = Date.now();
+    for (const [key, entry] of quotaCache) {
+      if (now - entry.fetchedAt > CACHE_TTL_MS * 5) {
+        quotaCache.delete(key);
+      }
     }
-  }
-}, 5 * 60_000);
-
-if (typeof _cacheCleanup === "object" && "unref" in _cacheCleanup) {
-  (_cacheCleanup as { unref?: () => void }).unref?.();
-}
+  },
+  5 * 60_000
+);
 
 // ─── Auth helpers (mirrors pi-grok-usage / hermes-grok-usage patterns) ────────
 

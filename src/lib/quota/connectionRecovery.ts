@@ -23,6 +23,7 @@
 
 import { cooldownUntilMs } from "@trouteai/open-sse/services/accountFallback.ts";
 import { isAutomatedTestProcess, isBuildProcess } from "@/shared/utils/testProcess";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 /**
  * The transient-cooldown status written by `markAccountUnavailable()` for a
@@ -202,8 +203,7 @@ const RECOVERY_LOG_PREFIX = "[ConnectionRecovery]";
 const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 
 declare global {
-  var __trouteaiConnRecovery:
-    { initialized: boolean; interval: ReturnType<typeof setInterval> | null } | undefined;
+  var __trouteaiConnRecovery: { initialized: boolean; interval: (() => void) | null } | undefined;
 }
 
 function getRecoveryState() {
@@ -272,8 +272,9 @@ export function initConnectionRecoveryScheduler(): void {
   // Delay the first tick a little so it never piles onto cold-start work.
   const timer = setTimeout(() => {
     runTick();
-    state.interval = setInterval(runTick, tickMs);
-    (state.interval as { unref?: () => void } | undefined)?.unref?.();
+    // Pauses while the server is idle: a request lets an account whose cooldown has passed
+    // through by itself, and the next request resumes this job at once.
+    state.interval = setIdleAwareInterval("connection-recovery", runTick, tickMs);
   }, 15_000);
   (timer as { unref?: () => void } | undefined)?.unref?.();
 }
@@ -282,7 +283,7 @@ export function initConnectionRecoveryScheduler(): void {
 export function stopConnectionRecoveryScheduler(): void {
   const state = getRecoveryState();
   if (state.interval) {
-    clearInterval(state.interval);
+    state.interval();
     state.interval = null;
   }
   state.initialized = false;

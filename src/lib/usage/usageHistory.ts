@@ -40,6 +40,7 @@ import {
   getPromptCacheReadTokens,
   getReasoningTokens,
 } from "./tokenAccounting";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 export type PendingRequestMetadata = {
   clientEndpoint?: string | null;
@@ -159,7 +160,7 @@ const pendingById = new Map<string, PendingRequestDetail>();
 const DEFAULT_MAX_PENDING_REQUEST_AGE_MS = 60 * 60 * 1000;
 const MAX_PENDING_DETAILS = 5000;
 const PENDING_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
-let _pendingSweepTimer: ReturnType<typeof setInterval> | null = null;
+let _pendingSweepTimer: (() => void) | null = null;
 
 export function getMaxPendingRequestAgeMs(
   rawValue: string | undefined = process.env.MAX_PENDING_REQUEST_AGE_MS
@@ -170,15 +171,18 @@ export function getMaxPendingRequestAgeMs(
 
 function ensurePendingSweepTimer(): void {
   if (_pendingSweepTimer || typeof setInterval !== "function") return;
-  _pendingSweepTimer = setInterval(() => {
-    try {
-      sweepStalePendingRequests();
-    } catch {
-      /* never let the reaper throw on the timer thread */
-    }
-  }, PENDING_SWEEP_INTERVAL_MS);
-  // Don't keep the process alive just for the reaper.
-  (_pendingSweepTimer as { unref?: () => void })?.unref?.();
+  // Pauses while the server is idle: pending requests are only added by requests.
+  _pendingSweepTimer = setIdleAwareInterval(
+    "pending-request-sweep",
+    () => {
+      try {
+        sweepStalePendingRequests();
+      } catch {
+        /* never let the reaper throw on the timer thread */
+      }
+    },
+    PENDING_SWEEP_INTERVAL_MS
+  );
 }
 
 /**

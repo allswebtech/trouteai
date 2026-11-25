@@ -16,42 +16,41 @@ function shouldStripPart(part: JsonRecord, stripTypes: Set<string>): boolean {
   return false;
 }
 
-export function stripIncompatibleMessageContent(
+/**
+ * The content kinds of the request that the model's `strip` list says it cannot take, in the
+ * order first met ("image", "audio" or the part type itself). The caller refuses the request
+ * by name: content is never dropped silently, so a model never answers a question it was not
+ * shown in full.
+ */
+export function findUnsupportedContentKinds(
   messages: unknown,
   stripTypes: readonly string[]
-): { messages: unknown; removedParts: number } {
-  if (!Array.isArray(messages) || stripTypes.length === 0) {
-    return { messages, removedParts: 0 };
-  }
-
+): string[] {
+  if (!Array.isArray(messages) || stripTypes.length === 0) return [];
   const stripSet = new Set(stripTypes);
-  let removedParts = 0;
-
-  const sanitizedMessages = messages.map((message) => {
-    const record = asRecord(message);
-    if (!Array.isArray(record.content)) {
-      return message;
+  const kinds: string[] = [];
+  for (const message of messages) {
+    const content = asRecord(message).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      const record = asRecord(part);
+      if (!shouldStripPart(record, stripSet)) continue;
+      const type = String(record.type);
+      const kind =
+        type === "image_url" || type === "image"
+          ? "image"
+          : type === "input_audio" || type === "audio"
+            ? "audio"
+            : type;
+      if (!kinds.includes(kind)) kinds.push(kind);
     }
+  }
+  return kinds;
+}
 
-    const filteredContent = record.content.filter((part) => {
-      const shouldStrip = shouldStripPart(asRecord(part), stripSet);
-      if (shouldStrip) {
-        removedParts += 1;
-      }
-      return !shouldStrip;
-    });
-
-    if (filteredContent.length > 0) {
-      return { ...record, content: filteredContent };
-    }
-
-    return {
-      ...record,
-      content: [{ type: "text", text: "[unsupported image/audio content removed]" }],
-    };
-  });
-
-  return { messages: sanitizedMessages, removedParts };
+/** The plain error for a request whose content the model cannot take. */
+export function unsupportedContentMessage(model: string, kinds: readonly string[]): string {
+  return `Model ${model} does not accept ${kinds.join(" or ")} content, and this request has it. Remove it or choose another model.`;
 }
 
 export function getStripTypesForProviderModel(providerId: string, modelId: string): string[] {

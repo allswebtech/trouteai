@@ -24,6 +24,7 @@ import {
   type QuotaFetcher,
   type QuotaInfo,
 } from "./quotaPreflight.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 // 60s — matches Codex's TTL. Long enough to avoid hammering upstream usage
 // endpoints on every routing decision, short enough that a near-exhausted
@@ -42,15 +43,18 @@ function cacheKey(provider: string, connectionId: string): string {
 }
 
 // Auto-cleanup stale entries — same shape as codexQuotaFetcher.
-const _cacheCleanup = setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of cache) {
-    if (now - entry.fetchedAt > CACHE_TTL_MS * 5) cache.delete(key);
-  }
-}, 5 * 60_000);
-if (typeof _cacheCleanup === "object" && "unref" in _cacheCleanup) {
-  (_cacheCleanup as { unref?: () => void }).unref?.();
-}
+// Pauses while the server is idle: entries are only added by requests, and the next request
+// runs the sweep again.
+setIdleAwareInterval(
+  "genericQuotaFetcher-sweep",
+  () => {
+    const now = Date.now();
+    for (const [key, entry] of cache) {
+      if (now - entry.fetchedAt > CACHE_TTL_MS * 5) cache.delete(key);
+    }
+  },
+  5 * 60_000
+);
 
 function toNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;

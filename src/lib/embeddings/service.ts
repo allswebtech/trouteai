@@ -20,7 +20,11 @@ import {
 import { resolveProxyForConnection } from "@/lib/db/settings";
 import { runWithProxyContext } from "@trouteai/open-sse/utils/proxyFetch.ts";
 import { handleComboChat } from "@trouteai/open-sse/services/combo.ts";
-import { resolveBareModelToConnectionDefault } from "@trouteai/open-sse/services/model.ts";
+import {
+  isBareModelConnectionDefaultForAnyName,
+  resolveBareModelToConnectionDefault,
+} from "@trouteai/open-sse/services/model.ts";
+import { getCachedSettings } from "@/lib/db/readCache";
 import { findEmbeddingComboDimensionConflict } from "./familyGuard";
 import { isPrivateHost, isCloudMetadataHost } from "@/shared/network/outboundUrlGuard";
 import { calculateCost } from "@/lib/usage/costCalculator";
@@ -236,10 +240,12 @@ export async function createEmbeddingResponse(
     credentials && typeof (credentials as { defaultModel?: unknown }).defaultModel === "string"
       ? ((credentials as { defaultModel?: string }).defaultModel as string)
       : null;
+  const embeddingSettings = await getCachedSettings().catch(() => ({}));
   const effectiveModel = resolveBareModelToConnectionDefault(
     modelStr,
     resolvedModel,
-    connectionDefaultModel
+    connectionDefaultModel,
+    { anyBareName: isBareModelConnectionDefaultForAnyName(embeddingSettings) }
   );
 
   // Resolve the connection-level proxy so the upstream embedding request honors

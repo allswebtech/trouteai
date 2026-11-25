@@ -39,7 +39,9 @@ import {
 
 /** One-line, printable text for a log value (no newlines or control characters). */
 function logSafe(value: unknown): string {
-  return String(value ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 200);
+  return String(value ?? "")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .slice(0, 200);
 }
 
 // ── Config ────────────────────────────────────────────────────────────────
@@ -441,8 +443,18 @@ async function seedLatestCompressionRunFromDb(): Promise<void> {
 
 // ── Heartbeat ─────────────────────────────────────────────────────────────
 
-function startHeartbeat(server: WebSocketServer): void {
-  const interval = setInterval(() => {
+// The heartbeat runs only while a dashboard page is connected: it starts with the first client
+// and stops when the last one has gone.
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopHeartbeat(): void {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
+
+function ensureHeartbeat(): void {
+  if (heartbeatTimer) return;
+  heartbeatTimer = setInterval(() => {
     const now = Date.now();
     for (const [clientId, client] of clients) {
       if (client.ws.readyState !== WebSocket.OPEN) {
@@ -458,11 +470,14 @@ function startHeartbeat(server: WebSocketServer): void {
       // Send ping
       sendTo(client.ws, { type: "pong" } as WsServerMessage);
     }
+    if (clients.size === 0) stopHeartbeat();
   }, HEARTBEAT_INTERVAL_MS);
-  // Don't keep the process alive solely for the heartbeat (it is also cleared on close).
-  (interval as { unref?: () => void })?.unref?.();
+  // Don't keep the process alive solely for the heartbeat.
+  (heartbeatTimer as { unref?: () => void })?.unref?.();
+}
 
-  server.on("close", () => clearInterval(interval));
+function startHeartbeat(server: WebSocketServer): void {
+  server.on("close", stopHeartbeat);
 }
 
 // ── Server Start ──────────────────────────────────────────────────────────
@@ -573,6 +588,7 @@ export async function startLiveDashboardServer(
     };
 
     clients.set(clientId, client);
+    ensureHeartbeat();
 
     // The app logger does not expand format specifiers, so values go in as text.
     // logSafe() strips control characters so a value cannot forge log lines (CWE-117).
@@ -588,9 +604,7 @@ export async function startLiveDashboardServer(
     // Handle close
     ws.on("close", () => {
       clients.delete(clientId);
-      console.log(
-        `[LiveWS] Client disconnected: ${logSafe(clientId)} [${clients.size} remaining]`
-      );
+      console.log(`[LiveWS] Client disconnected: ${logSafe(clientId)} [${clients.size} remaining]`);
     });
 
     // Handle errors

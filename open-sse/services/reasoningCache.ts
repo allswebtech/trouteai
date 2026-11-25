@@ -20,6 +20,7 @@ import {
   getReasoningCacheStats,
   setReasoningCache,
 } from "../../src/lib/db/reasoningCache.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 // ──────────────── Provider/Model Detection ────────────────
 
@@ -500,18 +501,21 @@ function startAutoCleanup(): void {
   }
 
   // Schedule periodic cleanup
-  const timer = setInterval(() => {
-    try {
-      const deleted = cleanupReasoningCache();
-      if (deleted > 0) {
-        console.log(`[ReasoningCache] periodic cleanup removed ${deleted} expired entries`);
+  // Pauses while the server is idle: entries are only written by requests.
+  setIdleAwareInterval(
+    "reasoning-cache-cleanup",
+    () => {
+      try {
+        const deleted = cleanupReasoningCache();
+        if (deleted > 0) {
+          console.log(`[ReasoningCache] periodic cleanup removed ${deleted} expired entries`);
+        }
+      } catch (error) {
+        console.error("[ReasoningCache] periodic cleanup failed:", error);
       }
-    } catch (error) {
-      console.error("[ReasoningCache] periodic cleanup failed:", error);
-    }
-  }, getCleanupIntervalMs());
-
-  timer.unref?.();
+    },
+    getCleanupIntervalMs()
+  );
 }
 
 // Start on module load — every consumer of reasoning cache benefits.

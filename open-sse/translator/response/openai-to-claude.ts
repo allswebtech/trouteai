@@ -108,6 +108,58 @@ function stopTextBlock(state, results) {
   state.textBlockStarted = false;
 }
 
+// Text held back while an `<invoke>` block was still open: no later chunk can close it, so it
+// was prose and goes to the client as text.
+function releaseHeldText(state, results) {
+  const held = state._xmlInvokeBuffer || "";
+  state._xmlInvokeBuffer = "";
+  if (!held) return;
+  if (!state.textBlockStarted || state.textBlockClosed) {
+    state.textBlockIndex = state.nextBlockIndex++;
+    state.textBlockStarted = true;
+    state.textBlockClosed = false;
+    results.push({
+      type: "content_block_start",
+      index: state.textBlockIndex,
+      content_block: { type: "text", text: "" },
+    });
+  }
+  results.push({
+    type: "content_block_delta",
+    index: state.textBlockIndex,
+    delta: { type: "text_delta", text: held },
+  });
+}
+
+export const EARLY_EOF_MESSAGE = "The upstream stream ended before the answer was complete.";
+
+/**
+ * A stream that ended after message_start without any finish_reason is a cut-off answer, not
+ * a finished one. Release the held text, close the open blocks, and mark the failure in-band
+ * so the stream ends with an Anthropic `error` event (never a made-up end_turn: a coding agent
+ * would end its turn on half an answer). Returns the closing events, or null.
+ */
+export function flushTruncatedClaudeStream(state) {
+  if (!state?.messageStartSent || state.claudeFinishEmitted || state.upstreamError) return null;
+  state.claudeFinishEmitted = true;
+  const results = [];
+  stopThinkingBlock(state, results);
+  releaseHeldText(state, results);
+  stopTextBlock(state, results);
+  for (const [, toolInfo] of state.toolCalls || []) {
+    if (!toolInfo.startEmitted || typeof toolInfo.blockIndex !== "number") continue;
+    results.push({ type: "content_block_stop", index: toolInfo.blockIndex });
+  }
+  state.upstreamError = {
+    status: 502,
+    type: "api_error",
+    code: "stream_early_eof",
+    message: EARLY_EOF_MESSAGE,
+    inband: true,
+  };
+  return results;
+}
+
 // Convert OpenAI stream chunk to Claude format
 export function openaiToClaudeResponse(chunk, state) {
   // Flush: emit the deferred final events if a trailing usage chunk never came.
@@ -464,6 +516,7 @@ export function openaiToClaudeResponse(chunk, state) {
   if (choice.finish_reason && !state.claudeFinishEmitted) {
     state.claudeFinishEmitted = true;
     stopThinkingBlock(state, results);
+    releaseHeldText(state, results);
     stopTextBlock(state, results);
 
     for (const [, toolInfo] of state.toolCalls) {

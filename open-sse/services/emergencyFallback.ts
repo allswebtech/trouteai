@@ -8,8 +8,9 @@
  * Inspired by ClawRouter: "gpt-oss-120b costs nothing and serves as
  * automatic fallback when wallet is empty."
  *
- * Operators can disable the redirect entirely with
- * `TROUTEAI_EMERGENCY_FALLBACK=false` (or `0`). Default remains enabled.
+ * The redirect answers with a different model than the one asked for, so it is off unless the
+ * user turns it on: `TROUTEAI_EMERGENCY_FALLBACK=true` (or `1`), or the feature flag of the same
+ * name stored in the dashboard. A stored value always wins over this default.
  */
 
 import { isFeatureFlagEnabled } from "@/shared/utils/featureFlags";
@@ -78,7 +79,7 @@ export type FallbackResult = FallbackDecision | NoFallbackDecision;
 
 function isEmergencyFallbackRawEnvEnabled(): boolean {
   const raw = process.env.TROUTEAI_EMERGENCY_FALLBACK;
-  return raw !== "false" && raw !== "0";
+  return raw === "true" || raw === "1";
 }
 
 export function resetEmergencyFallbackEnvCache(): void {
@@ -126,7 +127,7 @@ export function shouldUseFallback(
   if (!isEmergencyFallbackEnvEnabled()) {
     return {
       shouldFallback: false,
-      reason: "emergency fallback disabled via TROUTEAI_EMERGENCY_FALLBACK",
+      reason: "emergency fallback off (TROUTEAI_EMERGENCY_FALLBACK is not true)",
     };
   }
   if (config.skipForToolRequests && requestHasTools) {

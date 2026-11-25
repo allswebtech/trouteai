@@ -531,9 +531,10 @@ export function createErrorResult(
   errorCode?: string,
   errorType?: string,
   upstreamDetails?: unknown,
-  opts?: { passthrough?: boolean }
+  opts?: { passthrough?: boolean; upstreamHeaders?: Headers | Record<string, string> | null }
 ) {
   const body = buildErrorBody(statusCode, message, upstreamDetails);
+  const usageHeaders = planUsageHeaders(opts?.upstreamHeaders, statusCode);
   if (errorCode) {
     body.error.code = errorCode;
   }
@@ -570,7 +571,7 @@ export function createErrorResult(
     errorCode,
     response: new Response(JSON.stringify(body), {
       status: statusCode,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...usageHeaders },
     }),
   };
 
@@ -585,17 +586,64 @@ export function createErrorResult(
   // server-side classification (checkFallbackError, combo retry logic, etc.)
   // never sees a different value depending on this flag.
   if (opts?.passthrough) {
-    const passthroughResponse = buildPassthroughErrorResponse(
-      statusCode,
-      upstreamDetails,
-      retryAfterMs ? { "Retry-After": String(Math.ceil(retryAfterMs / 1000)) } : undefined
-    );
+    const passthroughResponse = buildPassthroughErrorResponse(statusCode, upstreamDetails, {
+      ...usageHeaders,
+      ...(retryAfterMs ? { "Retry-After": String(Math.ceil(retryAfterMs / 1000)) } : {}),
+    });
     if (passthroughResponse) {
       result.response = passthroughResponse;
     }
   }
 
   return result;
+}
+
+/**
+ * The longest wait an outage answer may ask for. A retry-after of hours on a 5xx would make a
+ * program in front of the gateway park an account that is only briefly down.
+ */
+export const OUTAGE_MAX_RETRY_AFTER_SEC = 60;
+
+/** Seconds for a Retry-After header: an outage (5xx) never asks for more than a minute. */
+export function retryAfterHeaderSeconds(statusCode: number, retryAfterSec: number): number {
+  return statusCode >= 500 ? Math.min(retryAfterSec, OUTAGE_MAX_RETRY_AFTER_SEC) : retryAfterSec;
+}
+
+/**
+ * The plan-usage headers of a Claude account that has used up its usage window, for a 429
+ * whose reset time is known. Programs in front of the gateway read them to park the account
+ * until the reset; a short burst limit must not carry them.
+ */
+export function usageLimitHeaders(retryAfterSec: number): Record<string, string> {
+  return {
+    "anthropic-ratelimit-unified-status": "rejected",
+    "anthropic-ratelimit-unified-reset": String(Math.floor(Date.now() / 1000) + retryAfterSec),
+  };
+}
+
+/**
+ * The provider's own plan-usage headers (Claude: anthropic-ratelimit-unified-*) and, on a 429,
+ * its retry-after, copied as they came. They are never made up here: an answer from a
+ * provider that sends none carries none.
+ */
+export function planUsageHeaders(
+  upstream: Headers | Record<string, string> | null | undefined,
+  statusCode: number
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!upstream) return out;
+  const entries: Array<[string, string]> = [];
+  if (typeof (upstream as Headers).forEach === "function") {
+    (upstream as Headers).forEach((value, key) => entries.push([key, value]));
+  } else {
+    for (const [key, value] of Object.entries(upstream)) entries.push([key, String(value)]);
+  }
+  for (const [key, value] of entries) {
+    const name = key.toLowerCase();
+    if (name.startsWith("anthropic-ratelimit-unified-")) out[name] = value;
+    else if (name === "retry-after" && statusCode === 429) out[name] = value;
+  }
+  return out;
 }
 
 /**
@@ -610,15 +658,17 @@ export function unavailableResponse(
   statusCode: number,
   message: string,
   retryAfter?: string | number | Date | null,
-  retryAfterHuman?: string
+  retryAfterHuman?: string,
+  opts: { usageLimit?: boolean } = {}
 ) {
-  const retryAfterSec = normalizeRetryAfterSeconds(retryAfter);
+  const retryAfterSec = retryAfterHeaderSeconds(statusCode, normalizeRetryAfterSeconds(retryAfter));
   const msg = retryAfterHuman ? `${message} (${retryAfterHuman})` : message;
-  return new Response(JSON.stringify({ error: { message: msg } }), {
+  return new Response(JSON.stringify(buildErrorBody(statusCode, msg)), {
     status: statusCode,
     headers: {
       "Content-Type": "application/json",
       "Retry-After": String(retryAfterSec),
+      ...(opts.usageLimit && statusCode === 429 ? usageLimitHeaders(retryAfterSec) : {}),
     },
   });
 }
@@ -627,7 +677,7 @@ export function providerCircuitOpenResponse(
   provider: string,
   retryAfter?: string | number | Date | null
 ) {
-  const retryAfterSec = normalizeRetryAfterSeconds(retryAfter);
+  const retryAfterSec = retryAfterHeaderSeconds(503, normalizeRetryAfterSeconds(retryAfter));
   return new Response(
     JSON.stringify({
       error: {
@@ -690,11 +740,14 @@ export function modelCooldownResponse({
   retryAfter,
   retryAfterAt,
   credentialsCoolingCount,
+  usageLimit = false,
 }: {
   model?: string | null;
   retryAfter?: string | number | Date | null;
   retryAfterAt?: string | null;
   credentialsCoolingCount?: number | null;
+  /** The cooldown is a used-up usage window, not a short rate limit. */
+  usageLimit?: boolean;
 }) {
   const retryAfterSec = normalizeRetryAfterSeconds(retryAfter);
   const resolvedRetryAfterAt =
@@ -717,6 +770,7 @@ export function modelCooldownResponse({
       headers: {
         "Content-Type": "application/json",
         "Retry-After": String(retryAfterSec),
+        ...(usageLimit ? usageLimitHeaders(retryAfterSec) : {}),
       },
     }
   );

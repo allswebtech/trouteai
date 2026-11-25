@@ -9,7 +9,14 @@ export const CLAUDE_CODE_COMPATIBLE_VERSION = CLAUDE_CODE_CLIENT_VERSION;
 export const CLAUDE_CODE_COMPATIBLE_USER_AGENT = getClaudeCodeUserAgent("sdk-cli");
 export const CLAUDE_CODE_COMPATIBLE_STAINLESS_PACKAGE_VERSION = CLAUDE_CODE_SDK_PACKAGE_VERSION;
 export const CLAUDE_CODE_COMPATIBLE_STAINLESS_RUNTIME_VERSION = CLAUDE_CODE_RUNTIME_VERSION;
-const CONTEXT_1M_NATIVE_MODELS = ["claude-opus-5"];
+// Models whose 1M window is native (no long-context beta).
+const CONTEXT_1M_NATIVE_MODELS = [
+  "claude-opus-5",
+  "claude-opus-5-5",
+  "claude-fable-5-1",
+  "claude-fable-5-2",
+  "claude-haiku-5-5",
+];
 
 export function modelHasNativeContext1m(model: string | null | undefined): boolean {
   const normalizedModel = String(model || "")

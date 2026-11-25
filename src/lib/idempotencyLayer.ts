@@ -11,6 +11,7 @@
  */
 
 import { getSettings } from "@/lib/localDb";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 const DEFAULT_WINDOW_MS = 5000;
 
@@ -22,16 +23,20 @@ let cleanupInterval;
 
 function ensureCleanup() {
   if (cleanupInterval) return;
-  cleanupInterval = setInterval(() => {
-    const now = Date.now();
-    for (const [key, entry] of idempotencyStore) {
-      if (now >= entry.expiresAt) {
-        idempotencyStore.delete(key);
+  // Pauses while the server is idle: entries are only added by requests, and a read checks the
+  // expiry itself.
+  cleanupInterval = setIdleAwareInterval(
+    "idempotency-sweep",
+    () => {
+      const now = Date.now();
+      for (const [key, entry] of idempotencyStore) {
+        if (now >= entry.expiresAt) {
+          idempotencyStore.delete(key);
+        }
       }
-    }
-  }, 30000);
-  // Don't prevent process exit
-  if (cleanupInterval.unref) cleanupInterval.unref();
+    },
+    30000
+  );
 }
 
 /**

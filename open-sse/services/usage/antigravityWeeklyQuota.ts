@@ -21,6 +21,7 @@ import { toRecord, toNumber } from "./scalars.ts";
 import { type UsageQuota, parseResetTime } from "./quota.ts";
 import { getAntigravityContentHeaders } from "../antigravityHeaders.ts";
 import type { AntigravityClientProfile } from "../antigravityClientProfile.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -34,7 +35,10 @@ const _weeklyQuotaInflight = new Map<string, Promise<unknown>>();
 
 // Self-contained purge timer — this leaf owns its own cache, so it owns the cleanup too
 // (same pattern as usage/antigravity.ts's module-level caches).
-const _weeklyQuotaCacheCleanupTimer = setInterval(
+// Pauses while the server is idle: entries are only added by requests, and the next request
+// runs the sweep again.
+setIdleAwareInterval(
+  "antigravity-weekly-quota-sweep",
   () => {
     const now = Date.now();
     for (const [key, entry] of _weeklyQuotaCache) {
@@ -43,7 +47,6 @@ const _weeklyQuotaCacheCleanupTimer = setInterval(
   },
   5 * 60 * 1000
 );
-_weeklyQuotaCacheCleanupTimer.unref?.();
 
 function buildCacheKey(
   accessToken: string,

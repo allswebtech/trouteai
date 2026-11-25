@@ -40,6 +40,23 @@ export function claudeToOpenAIResponse(chunk, state) {
       state.messageId = chunk.message?.id || `msg_${Date.now()}`;
       state.model = chunk.message?.model;
       state.toolCallIndex = 0;
+      // The service reports the input and cache figures here, in message_start; message_delta
+      // usually carries only the output count. Keep them so the final chunk can report them.
+      const startUsage = chunk.message?.usage;
+      if (startUsage && typeof startUsage === "object") {
+        const num = (v: unknown) => (typeof v === "number" ? v : 0);
+        const cacheRead = num(startUsage.cache_read_input_tokens);
+        const cacheCreation = num(startUsage.cache_creation_input_tokens);
+        const input = num(startUsage.input_tokens) + cacheRead;
+        state.usage = {
+          prompt_tokens: input,
+          completion_tokens: num(startUsage.output_tokens),
+          input_tokens: input,
+          output_tokens: num(startUsage.output_tokens),
+          ...(cacheRead > 0 ? { cache_read_input_tokens: cacheRead } : {}),
+          ...(cacheCreation > 0 ? { cache_creation_input_tokens: cacheCreation } : {}),
+        };
+      }
       results.push(createChunk(state, { role: "assistant" }));
       break;
     }

@@ -69,6 +69,7 @@ import {
   getAntigravityEnvelopeUserAgent,
   getAntigravitySessionId,
 } from "../services/antigravityIdentity.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 const MAX_RETRY_AFTER_MS = 60_000;
 const LONG_RETRY_THRESHOLD_MS = 60_000;
@@ -169,10 +170,8 @@ function evictStaleCreditBalanceEntries(): void {
   }
 }
 
-const _creditBalanceSweep = setInterval(evictStaleCreditBalanceEntries, 60_000);
-if (typeof _creditBalanceSweep === "object" && "unref" in _creditBalanceSweep) {
-  (_creditBalanceSweep as { unref?: () => void }).unref?.();
-}
+// Pauses while the server is idle: nothing adds entries then.
+setIdleAwareInterval("antigravity-credit-balance-sweep", evictStaleCreditBalanceEntries, 60_000);
 
 export function getAntigravityRemainingCredits(accountId: string): number | null {
   hydrateCreditCacheFromDb();

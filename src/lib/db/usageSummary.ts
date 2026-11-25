@@ -16,3 +16,21 @@ export function sumUsageTokensThisMonth(db: SqliteAdapter = getDbInstance()): nu
     return 0; // table may not exist yet on a fresh install — treat as 0 used
   }
 }
+
+/** Ids of the provider connections that served a request at or after `sinceIso`. */
+export function getConnectionIdsUsedSince(
+  sinceIso: string,
+  db: SqliteAdapter = getDbInstance()
+): Set<string> {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT connection_id AS id FROM usage_history
+         WHERE timestamp >= ? AND connection_id IS NOT NULL`
+      )
+      .all(sinceIso) as Array<{ id: string }>;
+    return new Set(rows.map((row) => row.id));
+  } catch {
+    return new Set();
+  }
+}

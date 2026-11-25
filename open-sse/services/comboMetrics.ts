@@ -5,6 +5,7 @@
  */
 
 import { recordProviderUsage } from "./autoCombo/providerDiversity";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 interface ModelMetrics {
   requests: number;
@@ -214,7 +215,10 @@ function evictOldestMetric(
   }
 }
 
-const _metricsCleanupTimer = setInterval(
+// Pauses while the server is idle: entries are only added by requests, and the next request
+// runs the sweep again.
+const _metricsCleanupTimer = setIdleAwareInterval(
+  "combo-metrics-sweep",
   () => {
     const now = Date.now();
     for (const [name, entry] of metrics) {
@@ -234,7 +238,6 @@ const _metricsCleanupTimer = setInterval(
   },
   5 * 60 * 1000
 ); // every 5 minutes
-_metricsCleanupTimer.unref?.(); // Don't prevent process exit
 
 /**
  * Record a combo request result.
@@ -480,7 +483,7 @@ export function resetComboMetrics(comboName: string): void {
  * Reset all combo metrics.
  */
 export function resetAllComboMetrics(): void {
-  clearInterval(_metricsCleanupTimer);
+  _metricsCleanupTimer();
   metrics.clear();
   shadowMetrics.clear();
 }

@@ -33,6 +33,7 @@ interface AuthzBypassSnapshot {
 interface RuntimeSettingsSnapshot {
   payloadRules: unknown;
   modelAliases: Record<string, string>;
+  answerRetiredModelsWithSuccessor: boolean;
   backgroundDegradation: JsonRecord | null;
   cliCompatProviders: string[];
   alwaysPreserveClientCache: string;
@@ -59,6 +60,7 @@ const DEFAULT_AUTHZ_BYPASS_SNAPSHOT: AuthzBypassSnapshot = {
 const DEFAULT_RUNTIME_SETTINGS_SNAPSHOT: RuntimeSettingsSnapshot = {
   payloadRules: null,
   modelAliases: {},
+  answerRetiredModelsWithSuccessor: false,
   backgroundDegradation: null,
   cliCompatProviders: [],
   alwaysPreserveClientCache: "auto",
@@ -223,6 +225,8 @@ export function buildRuntimeSettingsSnapshot(
   return {
     payloadRules: normalizePayloadRules(settings.payloadRules),
     modelAliases: normalizeStringRecord(settings.modelAliases),
+    // off unless the user stored true: a successor answers with another model
+    answerRetiredModelsWithSuccessor: settings.answerRetiredModelsWithSuccessor === true,
     backgroundDegradation: normalizeBackgroundDegradation(settings.backgroundDegradation),
     cliCompatProviders: normalizeStringArray(settings.cliCompatProviders),
     alwaysPreserveClientCache:
@@ -261,9 +265,14 @@ async function applyPayloadRulesSection(payloadRules: unknown) {
   setPayloadRulesConfig(payloadRules);
 }
 
-async function applyModelAliasesSection(modelAliases: Record<string, string>) {
-  const { setCustomAliases } = await import("@trouteai/open-sse/services/modelDeprecation.ts");
+async function applyModelAliasesSection(
+  modelAliases: Record<string, string>,
+  answerRetiredModelsWithSuccessor: boolean
+) {
+  const { setCustomAliases, setRetiredModelSuccessorsEnabled } =
+    await import("@trouteai/open-sse/services/modelDeprecation.ts");
   setCustomAliases(modelAliases);
+  setRetiredModelSuccessorsEnabled(answerRetiredModelsWithSuccessor);
 }
 
 async function applyBackgroundDegradationSection(backgroundDegradation: JsonRecord | null) {
@@ -434,8 +443,16 @@ export async function applyRuntimeSettings(
     markChanged("payloadRules");
   }
 
-  if (force || hasChanged(currentSnapshot.modelAliases, previousSnapshot.modelAliases)) {
-    await applyModelAliasesSection(currentSnapshot.modelAliases);
+  if (
+    force ||
+    hasChanged(currentSnapshot.modelAliases, previousSnapshot.modelAliases) ||
+    currentSnapshot.answerRetiredModelsWithSuccessor !==
+      previousSnapshot.answerRetiredModelsWithSuccessor
+  ) {
+    await applyModelAliasesSection(
+      currentSnapshot.modelAliases,
+      currentSnapshot.answerRetiredModelsWithSuccessor
+    );
     markChanged("modelAliases");
   }
 

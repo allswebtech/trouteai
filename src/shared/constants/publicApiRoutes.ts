@@ -14,7 +14,12 @@ const PUBLIC_API_ROUTE_PREFIXES = [
   "/api/usage/om-usage",
 ];
 
-const PUBLIC_READONLY_API_ROUTE_PREFIXES = ["/api/health/ping", "/api/settings/require-login"];
+const PUBLIC_READONLY_API_ROUTE_PREFIXES = [
+  "/api/health/ping",
+  "/api/settings/require-login",
+  // The tab icon of every page, the sign-in page included.
+  "/api/settings/favicon",
+];
 
 const PUBLIC_READONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 

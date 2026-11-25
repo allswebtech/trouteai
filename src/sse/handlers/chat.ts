@@ -19,8 +19,12 @@ import {
   formatRetryAfter,
 } from "@trouteai/open-sse/services/accountFallback.ts";
 import { getModelInfo, getComboForModel } from "../services/model";
-import { resolveBareModelToConnectionDefault } from "@trouteai/open-sse/services/model.ts";
+import {
+  isBareModelConnectionDefaultForAnyName,
+  resolveBareModelToConnectionDefault,
+} from "@trouteai/open-sse/services/model.ts";
 import { errorResponse, unavailableResponse } from "@trouteai/open-sse/utils/error.ts";
+import { comboFinalStatus } from "@trouteai/open-sse/services/combo/finalStatus.ts";
 import { isComboStepDisabled } from "@/lib/combos/steps";
 import { FORMATS } from "@trouteai/open-sse/translator/formats.ts";
 import {
@@ -29,10 +33,12 @@ import {
   webSearchNeedsEmulation,
 } from "./webSearchEmulation";
 import { getImageModelEntry } from "@trouteai/open-sse/config/imageRegistry.ts";
-import { acceptHeaderForcesStream } from "@trouteai/open-sse/utils/aiSdkCompat.ts";
 import { applyNoThinkingAlias } from "@trouteai/open-sse/utils/noThinkingAlias.ts";
 import { resolveCcDiscoveryAliasStrip } from "@/lib/ccDiscoveryAliasResolve";
 import { handleComboChat, shouldSkipConnDisable } from "@trouteai/open-sse/services/combo.ts";
+import { isHighLoadAnswer } from "@trouteai/open-sse/services/combo/comboPredicates.ts";
+import { withTRouteAIRoutingHeaders } from "@/domain/trouteaiResponseMeta";
+import { runAsAnswerFallback } from "@trouteai/open-sse/services/answerFallbackContext.ts";
 import { mergeAbortSignals } from "@trouteai/open-sse/executors/base.ts";
 import { resolveRequestAutoControls } from "@trouteai/open-sse/services/autoCombo/requestControls.ts";
 import { resolveComboConfig } from "@trouteai/open-sse/services/comboConfig.ts";
@@ -261,10 +267,27 @@ export async function handleChat(
   } catch {
     pathname = "";
   }
-  return normalizeContextOverflowResponse(
-    response,
-    /\/messages\/?$/.test(pathname) ? "claude" : "openai"
+  const dialect = /\/messages\/?$/.test(pathname) ? "claude" : "openai";
+  const normalized = await normalizeContextOverflowResponse(
+    withDialectOverloadStatus(response, dialect),
+    dialect
   );
+  // Every answer and every error names the model string the client sent.
+  const sentModel = clientRawRequest?.body?.model ?? preParsedBody?.model;
+  return typeof sentModel === "string" && sentModel.trim()
+    ? withTRouteAIRoutingHeaders(normalized, { requestedModel: sentModel })
+    : normalized;
+}
+
+/**
+ * 529 "overloaded" is an Anthropic status. OpenAI-style clients do not know it, so on those
+ * routes it is the 503 they retry; the Anthropic route keeps 529 with overloaded_error.
+ */
+function withDialectOverloadStatus(response: Response, dialect: "claude" | "openai"): Response {
+  if (dialect === "claude" || !response || response.status !== 529) return response;
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  return new Response(response.body, { status: HTTP_STATUS.SERVICE_UNAVAILABLE, headers });
 }
 
 async function handleChatRequest(
@@ -391,20 +414,6 @@ async function handleChatRequest(
   // prior local clone was a redundant second full-body copy on the hot path.
   if (!clientRawRequest) {
     clientRawRequest = buildClientRawRequest(request, body);
-  }
-
-  // Accept-header streaming opt-in. A bare `Accept:
-  // text/event-stream` with `stream` omitted opts a curl/httpx-style client into
-  // SSE; a client that ALSO lists application/json (OpenAI / Vercel AI SDK
-  // non-stream signature) does NOT — it expects a JSON object. An explicit body
-  // `stream` value (true or false) always wins. See acceptHeaderForcesStream.
-  const acceptHeader = request.headers.get("accept") || "";
-  if (acceptHeaderForcesStream(acceptHeader, body.stream)) {
-    body = { ...body, stream: true };
-    log.debug(
-      "STREAM",
-      "Accept: text/event-stream header → overriding stream=true (body had no stream field)"
-    );
   }
 
   // Log request endpoint and model
@@ -708,11 +717,21 @@ async function handleChatRequest(
     // Pre-check function used by combo routing. For explicit combo live tests,
     // avoid pre-skipping so each model gets a real execution attempt.
     const comboPreselectedCredentials = new Map<string, any>();
-    // Earliest time a target skipped for a used-up limit / cooldown is usable again. When the
-    // combo ends with every target skipped, the client gets 429 + Retry-After for this time.
+    // Earliest time a target skipped for a used-up limit / cooldown is usable again, and the
+    // status each skip stands for. When the combo ends with every target skipped, the client
+    // gets 429 + Retry-After only when every skip was a limit; a cooldown the gateway set after
+    // an outage stays the 5xx it was.
     let comboEarliestRetryAfterMs: number | null = null;
+    const comboSkipStatuses: number[] = [];
+    let comboSkipsAreUsageLimits = true;
     const comboHiddenModelCache = new Map<string, boolean>();
-    const noteComboRetryAfter = (value: unknown) => {
+    const noteComboRetryAfter = (creds: any) => {
+      const status = Number(creds?.cooldownStatus) || Number(creds?.lastErrorCode) || 429;
+      comboSkipStatuses.push(status);
+      if (status === 429 && creds?.cooldownReason !== "quota_exhausted") {
+        comboSkipsAreUsageLimits = false;
+      }
+      const value = creds?.retryAfter;
       const ms =
         typeof value === "string" || value instanceof Date ? new Date(value).getTime() : NaN;
       if (!Number.isFinite(ms) || ms <= Date.now()) return;
@@ -798,7 +817,7 @@ async function handleChatRequest(
         }
       );
       if (!creds || creds.allRateLimited) {
-        if (creds?.allRateLimited) noteComboRetryAfter(creds.retryAfter);
+        if (creds?.allRateLimited) noteComboRetryAfter(creds);
         return false;
       }
 
@@ -921,6 +940,7 @@ async function handleChatRequest(
       relayOptions,
       signal: request?.signal ?? null,
       correlationId: reqId,
+      priority: request?.headers?.get?.("x-trouteai-priority") ?? null,
     });
 
     let response = comboResponse;
@@ -939,27 +959,41 @@ async function handleChatRequest(
         `Combo "${combo.name}" exhausted — attempting global fallback: ${fallbackModel}`
       );
       try {
-        const fallbackResponse = await handleSingleModelChat(
-          body,
-          fallbackModel,
-          clientRawRequest,
-          request,
-          combo.name,
-          apiKeyInfo,
-          telemetry,
+        const fallbackResponse = await runAsAnswerFallback(
           {
-            sessionId,
-            sessionAffinityKey,
-            emergencyFallbackTried: true,
-            forceLiveComboTest: isComboLiveTest,
+            fallback: "global",
+            attempts: Array.isArray(combo.models) ? combo.models.length : 1,
           },
-          combo.strategy,
-          true
+          () =>
+            handleSingleModelChat(
+              body,
+              fallbackModel,
+              clientRawRequest,
+              request,
+              combo.name,
+              apiKeyInfo,
+              telemetry,
+              {
+                sessionId,
+                sessionAffinityKey,
+                emergencyFallbackTried: true,
+                forceLiveComboTest: isComboLiveTest,
+              },
+              combo.strategy,
+              true
+            )
         );
         if (fallbackResponse.ok) {
           log.info("GLOBAL_FALLBACK", `Global fallback ${fallbackModel} succeeded`);
           recordTelemetry(telemetry);
-          return withSessionHeader(fallbackResponse, sessionId);
+          // Every step of the combo failed or was skipped before the global fallback answered.
+          return withSessionHeader(
+            withTRouteAIRoutingHeaders(fallbackResponse, {
+              fallback: "global",
+              fallbackAttempts: Array.isArray(combo.models) ? combo.models.length : 1,
+            }),
+            sessionId
+          );
         }
         log.warn(
           "GLOBAL_FALLBACK",
@@ -987,12 +1021,22 @@ async function handleChatRequest(
         .catch(() => null);
       if (code === "ALL_ACCOUNTS_INACTIVE") {
         const retryAt = new Date(comboEarliestRetryAfterMs).toISOString();
-        response = unavailableResponse(
-          HTTP_STATUS.RATE_LIMITED,
-          `All accounts of combo '${combo.name}' have reached their usage limit; the next one is usable at ${retryAt}`,
-          retryAt,
-          formatRetryAfter(retryAt)
-        );
+        const skipStatus = comboFinalStatus(comboSkipStatuses, HTTP_STATUS.RATE_LIMITED);
+        response =
+          skipStatus === HTTP_STATUS.RATE_LIMITED
+            ? unavailableResponse(
+                HTTP_STATUS.RATE_LIMITED,
+                `All accounts of combo '${combo.name}' have reached their usage limit; the next one is usable at ${retryAt}`,
+                retryAt,
+                formatRetryAfter(retryAt),
+                { usageLimit: comboSkipsAreUsageLimits }
+              )
+            : unavailableResponse(
+                skipStatus,
+                `Every model of combo '${combo.name}' is cooling down after upstream errors`,
+                retryAt,
+                formatRetryAfter(retryAt)
+              );
       }
     }
 
@@ -1078,7 +1122,24 @@ export { buildClientRawRequest, resolveDispatchClientRawRequest };
  * extracted to focused helpers. This function orchestrates the credential
  * retry loop.
  */
+/**
+ * An error from one target names the target that was tried (X-TRouteAI-Model / -Provider),
+ * like an answer names the model that wrote it. Answers already carry both from chatCore.
+ */
 async function handleSingleModelChat(
+  ...args: Parameters<typeof handleSingleModelChatInner>
+): Promise<Response> {
+  const response: Response = await handleSingleModelChatInner(...args);
+  if (!response || response.ok) return response;
+  const modelStr = typeof args[1] === "string" ? args[1] : "";
+  const slash = modelStr.indexOf("/");
+  return withTRouteAIRoutingHeaders(response, {
+    model: slash > 0 ? modelStr.slice(slash + 1) : modelStr,
+    provider: slash > 0 ? modelStr.slice(0, slash) : null,
+  });
+}
+
+async function handleSingleModelChatInner(
   body: any,
   modelStr: string,
   clientRawRequest: any = null,
@@ -1315,9 +1376,9 @@ async function handleSingleModelChat(
   });
 
   const userAgent = request?.headers?.get("user-agent") || "";
-  const baseRetrySettings = resolveCooldownAwareRetrySettings(
-    runtimeOptions.cachedSettings ?? (await getCachedSettings().catch(() => ({})))
-  );
+  const singleModelSettings: Record<string, unknown> =
+    runtimeOptions.cachedSettings ?? (await getCachedSettings().catch(() => ({})));
+  const baseRetrySettings = resolveCooldownAwareRetrySettings(singleModelSettings);
   const retrySettings = disableCooldownAwareRetry(
     baseRetrySettings,
     provider === "claude-web" ||
@@ -1454,7 +1515,9 @@ async function handleSingleModelChat(
       // upstream call so the provider receives a concrete model rather than the
       // placeholder. A "/"-qualified model name is always left untouched.
       const effectiveModel =
-        resolveBareModelToConnectionDefault(modelStr, model, credentials.defaultModel) ?? model;
+        resolveBareModelToConnectionDefault(modelStr, model, credentials.defaultModel, {
+          anyBareName: isBareModelConnectionDefaultForAnyName(singleModelSettings),
+        }) ?? model;
       let requestBody =
         effectiveModel !== model ? { ...body, model: `${provider}/${effectiveModel}` } : body;
       if (!runtimeOptions.reasoningDecision && runtimeOptions.reasoningIntent) {
@@ -1810,27 +1873,34 @@ async function handleSingleModelChat(
               `${currentModelStr} -> ${fallbackModelStr} | reason=${fallbackDecision.reason}`
             );
 
-            const fallbackResponse = await handleSingleModelChat(
-              fallbackBody,
-              fallbackModelStr,
-              clientRawRequest,
-              request,
-              comboName,
-              apiKeyInfo,
-              telemetry,
-              {
-                ...runtimeOptions,
-                emergencyFallbackTried: true,
-                forcedConnectionId: null,
-                comboStepId: null,
-                comboExecutionKey: null,
-              },
-              null, // no strategy for emergency fallback
-              Boolean(comboName) // isCombo if comboName exists
+            const fallbackResponse = await runAsAnswerFallback(
+              { fallback: "emergency", attempts: 1 },
+              () =>
+                handleSingleModelChat(
+                  fallbackBody,
+                  fallbackModelStr,
+                  clientRawRequest,
+                  request,
+                  comboName,
+                  apiKeyInfo,
+                  telemetry,
+                  {
+                    ...runtimeOptions,
+                    emergencyFallbackTried: true,
+                    forcedConnectionId: null,
+                    comboStepId: null,
+                    comboExecutionKey: null,
+                  },
+                  null, // no strategy for emergency fallback
+                  Boolean(comboName) // isCombo if comboName exists
+                )
             );
 
             if (fallbackResponse.ok) {
-              return fallbackResponse;
+              return withTRouteAIRoutingHeaders(fallbackResponse, {
+                fallback: "emergency",
+                fallbackAttempts: 1,
+              });
             }
 
             log.warn(
@@ -1912,9 +1982,14 @@ async function handleSingleModelChat(
       const is401 = result.status === 401;
       const skipConnectionDisable = shouldSkipConnDisable(result, is401, hasExtraKeys, provider);
 
+      // The provider's own "high load" answer is about its load right now, not about this
+      // account: the account is not marked unavailable (a mark would cool it and drop the pin of
+      // every conversation on it). The request still moves on to another account where it may.
       const { shouldFallback, cooldownMs } = skipConnectionDisable
         ? { shouldFallback: false, cooldownMs: 0 }
-        : await markAccountUnavailable(
+        : isHighLoadAnswer(result.status, errorStr)
+          ? { shouldFallback: true, cooldownMs: 0 }
+          : await markAccountUnavailable(
             credentials.connectionId,
             result.status,
             errorStr,

@@ -16,6 +16,14 @@ import type { ResolvedComboTarget } from "./types.ts";
 
 // Status codes that should mark round-robin target semaphores as cooling down.
 export const TRANSIENT_FOR_SEMAPHORE = [429, 502, 503, 504];
+
+/**
+ * The provider's own "high load" answer (a 500 or 529 that says so). It is about the provider's
+ * load right now, not about the account: no usage limit, no account cool-down.
+ */
+export function isHighLoadAnswer(status: number, errorText: unknown): boolean {
+  return (status === 500 || status === 529) && /high load|overloaded/i.test(String(errorText ?? ""));
+}
 // Patterns that signal all accounts for a provider are rate-limited / exhausted.
 // Used to detect 503 responses from handleNoCredentials so combo can fallback.
 export const ALL_ACCOUNTS_RATE_LIMITED_PATTERNS = [

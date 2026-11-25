@@ -38,12 +38,65 @@ export async function computeCCH(bodyBytes: Uint8Array): Promise<string> {
   return masked.toString(16).padStart(5, "0");
 }
 
+/** Index of the closing quote of the JSON string that opens at `open`. */
+function stringEnd(json: string, open: number): number {
+  let end = open + 1;
+  while (end < json.length && json[end] !== '"') end += json[end] === "\\" ? 2 : 1;
+  return end;
+}
+
+/** [start, end) of the value of the top-level `system` key of a JSON object string. */
+function systemValueRange(json: string): [number, number] | null {
+  let depth = 0;
+  let systemStart = -1;
+  for (let i = 0; i < json.length; i++) {
+    const c = json[i];
+    if (c === '"') {
+      const end = stringEnd(json, i);
+      if (depth === 1) {
+        let j = end + 1;
+        while (" \n\t\r".includes(json[j])) j++;
+        if (json[j] === ":") {
+          if (systemStart >= 0) return [systemStart, i];
+          if (json.slice(i + 1, end) === "system") systemStart = j + 1;
+        }
+      }
+      i = end;
+    } else if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 0) return systemStart >= 0 ? [systemStart, i] : null;
+    }
+  }
+  return null;
+}
+
+// The `cch=` of the billing line: within one JSON string (no quote in between).
+const BILLING_CCH = /x-anthropic-billing-header[^"]*?\bcch=([0-9a-f]{5});/g;
+
+/**
+ * Where the billing line's `cch=xxxxx;` value starts, looking only inside the top-level
+ * `system`. A first-match rewrite of the whole body could hit the same words in user text
+ * (`messages` is serialised before `system`) and leave the real billing line unsigned.
+ */
+function findBillingCch(body: string): number {
+  if (!body.includes("x-anthropic-billing-header")) return -1;
+  const range = systemValueRange(body);
+  if (!range) return -1;
+  BILLING_CCH.lastIndex = range[0];
+  const match = BILLING_CCH.exec(body);
+  if (!match || match.index >= range[1]) return -1;
+  const at = match.index + match[0].length - "cch=00000;".length;
+  return at < range[1] ? at : -1;
+}
+
 export async function signRequestBody(bodyString: string): Promise<string> {
-  if (!CCH_PATTERN.test(bodyString)) return bodyString;
+  const at = findBillingCch(bodyString);
+  if (at < 0) return bodyString;
   const encoder = new TextEncoder();
   const bodyBytes = encoder.encode(bodyString);
   const token = await computeCCH(bodyBytes);
-  return bodyString.replace(CCH_PATTERN, `cch=${token};`);
+  return bodyString.slice(0, at) + `cch=${token};` + bodyString.slice(at + "cch=00000;".length);
 }
 
 export { CCH_PATTERN };

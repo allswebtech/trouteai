@@ -91,6 +91,15 @@ import { incrementCcDiscoveryHitCount } from "@/lib/db/ccDiscoveryMetrics";
 import { isFreeModel, providerHasFreeModels } from "@/shared/utils/freeModels";
 import { isCodexDiscoveryModelExcluded } from "@/shared/services/codexDiscoveryPolicy";
 import { buildErrorBody } from "@trouteai/open-sse/utils/error";
+import {
+  type RoutableComboTarget,
+  filterByAllowedConnections,
+  isCatalogUsableConnection,
+  resolveAllowedConnectionIds,
+  selectStepConnections,
+  shouldListRoutableOnly,
+  withoutDisabledSteps,
+} from "./catalogRoutable";
 
 // Public API of this module is preserved after the catalog helper extraction:
 // `isVisionModelId` and
@@ -151,10 +160,12 @@ export async function getUnifiedModelsResponse(
   }
 
   try {
+    const routableOnly = await shouldListRoutableOnly(request);
     return await resolveCachedCatalogResponse(
       request,
       { corsHeaders, diagnosticHeaders },
-      buildCatalogPayload
+      buildCatalogPayload,
+      routableOnly ? "routable" : "all"
     );
   } catch (err) {
     // Never put a raw err.message/err.stack in a response body.
@@ -211,6 +222,9 @@ async function buildUnifiedModelsResponseCore(
       ...diagnosticHeaders,
     });
     if (authRejection) return authRejection;
+    // A client gets only the names a request can be served for now; the dashboard keeps
+    // the full list (see ./catalogRoutable.ts).
+    const routableOnly = await shouldListRoutableOnly(request);
     const { aliasToProviderId, providerIdToAlias } = buildAliasMaps();
     const _qp = new URL(request.url).searchParams.get("prefix");
     const prefixMode =
@@ -248,6 +262,20 @@ async function buildUnifiedModelsResponseCore(
       totalConnectionCount = connections.length;
       // Filter to only active connections
       connections = connections.filter((c) => c.isActive !== false);
+      if (routableOnly) {
+        // Only accounts a request could use now: no terminal state, and inside the API
+        // key's own account allowlist. The request path applies both before it sends.
+        connections = connections.filter(isCatalogUsableConnection);
+        const catalogApiKey = extractApiKey(request);
+        if (catalogApiKey) {
+          const { getApiKeyMetadata } = await import("@/lib/db/apiKeys");
+          const keyMeta = await getApiKeyMetadata(catalogApiKey);
+          connections = filterByAllowedConnections(
+            connections,
+            await resolveAllowedConnectionIds(keyMeta)
+          );
+        }
+      }
     } catch (e) {
       // If database not available, show no provider models (safe default)
       console.log("[catalog] Could not fetch providers:", e);
@@ -264,12 +292,15 @@ async function buildUnifiedModelsResponseCore(
     // Build map of provider node ID to prefix and type for compatible providers
     const providerIdToPrefix: Record<string, string> = {};
     const nodeIdToProviderType: Record<string, string> = {};
+    // Combo steps name a compatible node by its prefix; its accounts are stored under the id.
+    const prefixToNodeId: Record<string, string> = {};
     // Public owner ids (prefixes) of Claude-Code-compatible nodes: the gateway routes
     // their `-<effort>` model ids, so the catalog may advertise those variants.
     const effortVariantOwners = new Set<string>();
     for (const node of providerNodes) {
       if (node.prefix) {
         providerIdToPrefix[node.id] = node.prefix;
+        prefixToNodeId[node.prefix] = node.id;
         if (isClaudeCodeCompatibleProvider(node.id)) effortVariantOwners.add(node.prefix);
       }
       if (node.type) {
@@ -296,6 +327,31 @@ async function buildUnifiedModelsResponseCore(
     } catch (e) {
       console.log("Could not fetch combos");
     }
+
+    // Custom models carry the limits the owner set for them; a combo step that names one
+    // reads its limits from here, so they are loaded before the combos are listed.
+    let customModelsMap: Record<string, unknown> = {};
+    try {
+      customModelsMap = (await getAllCustomModels()) as Record<string, unknown>;
+    } catch {
+      customModelsMap = {};
+    }
+    const findCustomModel = (
+      providerKeys: Array<string | null | undefined>,
+      modelId: string
+    ): CustomModelEntry | null => {
+      for (const key of providerKeys) {
+        if (!key) continue;
+        const list = customModelsMap[key];
+        if (!Array.isArray(list)) continue;
+        const found = list.find(
+          (entry) =>
+            !!entry && typeof entry === "object" && (entry as CustomModelEntry).id === modelId
+        );
+        if (found) return found as CustomModelEntry;
+      }
+      return null;
+    };
 
     // Build set of active provider aliases
     const activeAliases = new Set();
@@ -366,6 +422,41 @@ async function buildUnifiedModelsResponseCore(
     const getComboTargetModelId = (target: ComboCatalogTarget) =>
       getComboTargetModelIdFromMaps(aliasMaps, target);
 
+    // A combo step can be served now when its model is switched on and an account it may
+    // run on exists: the same checks the request path makes before it sends anything.
+    const isTargetRoutable = (target: RoutableComboTarget): boolean => {
+      const resolved = getComboTargetModelId(target);
+      if (!resolved) return false;
+      const rawProvider = typeof target.provider === "string" ? target.provider : "";
+      const nodeId = prefixToNodeId[rawProvider] || prefixToNodeId[resolved.providerId];
+      const providerKeys = [nodeId, resolved.providerId, rawProvider].filter(
+        (key): key is string => typeof key === "string" && key.length > 0
+      );
+      if (providerKeys.some((key) => getModelIsHidden(key, resolved.modelId))) return false;
+      const alias = providerIdToAlias[resolved.providerId];
+      if (isNoAuthProviderKey(resolved.providerId, rawProvider, alias)) {
+        return !isNoAuthProviderBlocked(blockedProviders, resolved.providerId, rawProvider, alias);
+      }
+      const candidates = getConnectionsForProvider(...providerKeys, alias);
+      return hasEligibleConnectionForModel(
+        selectStepConnections(candidates, target),
+        resolved.modelId
+      );
+    };
+    // Nested combo references skip switched-off steps too, as on the request path.
+    const runnableCombos = combos.map((combo) => withoutDisabledSteps(combo));
+    const isComboRoutable = (combo: Record<string, any>): boolean => {
+      const storedSteps = Array.isArray(combo.models) ? combo.models : [];
+      // A pure auto combo with no steps of its own scores every model of every account.
+      if (storedSteps.length === 0) return combo.strategy === "auto" && connections.length > 0;
+      const targets = resolveNestedComboTargets(
+        withoutDisabledSteps(combo) as Parameters<typeof resolveNestedComboTargets>[0],
+        runnableCombos as Parameters<typeof resolveNestedComboTargets>[1]
+      ) as RoutableComboTarget[];
+      return targets.some(isTargetRoutable);
+    };
+    const routableCombos = routableOnly ? combos.filter(isComboRoutable) : combos;
+
     const getComboTargetCatalogMetadata = (
       target: ComboCatalogTarget
     ): ComboTargetCatalogMetadata | null => {
@@ -378,8 +469,33 @@ async function buildUnifiedModelsResponseCore(
       });
       if (!canonical) return null;
 
+      const rawProvider = typeof target.provider === "string" ? target.provider : "";
+      const customModel = findCustomModel(
+        [
+          prefixToNodeId[rawProvider],
+          prefixToNodeId[targetModel.providerId],
+          targetModel.providerId,
+          rawProvider,
+        ],
+        targetModel.modelId
+      );
+      const customContext = isPositiveFiniteNumber(customModel?.inputTokenLimit)
+        ? customModel.inputTokenLimit
+        : undefined;
+      const customOutput = isPositiveFiniteNumber(customModel?.outputTokenLimit)
+        ? customModel.outputTokenLimit
+        : undefined;
+
       const source = canonical.metadata.source;
-      if (!source.providerRegistry && !source.staticSpec && !source.syncedCapability) return null;
+      if (
+        !source.providerRegistry &&
+        !source.staticSpec &&
+        !source.syncedCapability &&
+        !customContext &&
+        !customOutput
+      ) {
+        return null;
+      }
 
       const providerId = canonical.provider || targetModel.providerId;
       const modelId = canonical.model || targetModel.modelId;
@@ -402,6 +518,7 @@ async function buildUnifiedModelsResponseCore(
         syncedContext ??
         registryContext ??
         specContext ??
+        customContext ??
         (getTokenLimit(providerId, modelId) || undefined);
       const registryInputLimit = isPositiveFiniteNumber(registryModel?.maxInputTokens)
         ? registryModel.maxInputTokens
@@ -414,7 +531,7 @@ async function buildUnifiedModelsResponseCore(
         ? synced.limit_output
         : isPositiveFiniteNumber(spec?.maxOutputTokens)
           ? spec.maxOutputTokens
-          : undefined;
+          : customOutput;
 
       const syncedVision =
         typeof synced?.attachment === "boolean"
@@ -549,7 +666,7 @@ async function buildUnifiedModelsResponseCore(
         const { buildQuotaExclusiveModels } = await import("@/lib/quota/quotaCombos");
         const quotaModels = await buildQuotaExclusiveModels(
           earlyKeyMeta.allowedQuotas,
-          combos,
+          routableCombos,
           timestamp,
           (c) => buildComboCatalogMetadata(c, combos)
         );
@@ -599,6 +716,21 @@ async function buildUnifiedModelsResponseCore(
       try {
         const suffix = autoId.replace(/^auto\/?/, "");
         const virtualCombo = await createBuiltinAutoCombo(autoId, suffix);
+        // An auto combo with no candidate that can be served now would answer 503.
+        if (
+          routableOnly &&
+          !(Array.isArray(virtualCombo.models) ? virtualCombo.models : []).some((step) =>
+            isTargetRoutable({
+              modelStr: step.model,
+              provider: step.providerId,
+              connectionId: step.connectionId,
+              allowedConnectionIds: step.allowedConnectionIds ?? null,
+            })
+          )
+        ) {
+          listedIds.delete(autoId);
+          continue;
+        }
         const contextLength = virtualCombo.advertisedContextLength || 128000;
         const maxOutputTokens = virtualCombo.advertisedMaxOutputTokens || 8192;
         models.push({
@@ -615,6 +747,10 @@ async function buildUnifiedModelsResponseCore(
         });
       } catch (err) {
         console.log(`[catalog] Could not materialize built-in auto model ${autoId}:`, err);
+        if (routableOnly) {
+          listedIds.delete(autoId);
+          continue;
+        }
         models.push(baseAutoEntry);
       }
     }
@@ -640,6 +776,9 @@ async function buildUnifiedModelsResponseCore(
       ) {
         continue;
       }
+      // Steps switched off, models switched off and missing accounts: the combo would answer
+      // 503, so a client does not see it.
+      if (routableOnly && !isComboRoutable(combo)) continue;
 
       const comboMetadata = buildComboCatalogMetadata(combo, combos);
 
@@ -1149,7 +1288,6 @@ async function buildUnifiedModelsResponseCore(
 
     // Add custom models (user-defined)
     try {
-      const customModelsMap = (await getAllCustomModels()) as Record<string, unknown>;
       for (const [providerId, rawProviderCustomModels] of Object.entries(customModelsMap)) {
         if (providerUsesCuratedModelsOnly(providerId)) continue;
         // Skip Gemini — handled by syncedAvailableModels above
@@ -1429,7 +1567,7 @@ async function buildUnifiedModelsResponseCore(
         const { buildQuotaExclusiveModels } = await import("@/lib/quota/quotaCombos");
         finalModels = await buildQuotaExclusiveModels(
           keyMeta.allowedQuotas,
-          combos,
+          routableCombos,
           timestamp,
           (c) => buildComboCatalogMetadata(c, combos)
         );

@@ -100,6 +100,8 @@ type CallLogSummaryRow = {
   correlation_id?: string | null;
   model_pinned?: number | null;
   session_tag?: string | null;
+  fallback?: string | null;
+  fallback_attempts?: number | null;
 };
 
 const RESOLVED_ACCOUNT_SQL = "COALESCE(NULLIF(pc.name, ''), NULLIF(pc.email, ''), cl.account)";
@@ -572,6 +574,8 @@ function mapSummaryRow(row: CallLogSummaryRow) {
     correlationId: row.correlation_id || null,
     modelPinned: toNumber(row.model_pinned) === 1,
     sessionTag: row.session_tag || null,
+    fallback: row.fallback || null,
+    fallbackAttempts: toNumber(row.fallback_attempts),
   };
 }
 
@@ -667,6 +671,11 @@ export async function saveCallLog(entry: any) {
       correlationId: entry.correlationId || null,
       modelPinned: entry.modelPinned ? 1 : 0,
       sessionTag: entry.sessionTag || null,
+      fallback:
+        typeof entry.fallback === "string" && entry.fallback.trim()
+          ? entry.fallback.trim().slice(0, 200)
+          : null,
+      fallbackAttempts: Math.max(0, Math.round(toNumber(entry.fallbackAttempts))),
     };
 
     const requestSummary = noLogEnabled
@@ -715,7 +724,7 @@ export async function saveCallLog(entry: any) {
         combo_name, combo_step_id, combo_execution_key, error_summary, detail_state,
         artifact_relpath, artifact_size_bytes, artifact_sha256,
         has_request_body, has_response_body, has_pipeline_details, request_summary,
-        correlation_id, model_pinned, session_tag
+        correlation_id, model_pinned, session_tag, fallback, fallback_attempts
       )
       VALUES (
         @id, @timestamp, @method, @path, @status, @model, @requestedModel, @provider,
@@ -726,7 +735,7 @@ export async function saveCallLog(entry: any) {
         @comboName, @comboStepId, @comboExecutionKey, @errorSummary, @detailState,
         @artifactRelPath, @artifactSizeBytes, @artifactSha256,
         @hasRequestBody, @hasResponseBody, @hasPipelineDetails, @requestSummary,
-        @correlationId, @modelPinned, @sessionTag
+        @correlationId, @modelPinned, @sessionTag, @fallback, @fallbackAttempts
       )
     `
     ).run({

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { CLAUDE_CONFIG } from "../constants/oauth";
-import { CLAUDE_CODE_VERSION } from "@trouteai/open-sse/executors/claudeIdentity.ts";
+import { getClaudeCodeVersion } from "@trouteai/open-sse/executors/claudeIdentity.ts";
 
 const BOOTSTRAP_FETCH_TIMEOUT_MS = 10_000;
 
@@ -14,7 +14,7 @@ async function fetchClaudeBootstrap(accessToken) {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: "application/json",
-        "User-Agent": `claude-cli/${CLAUDE_CODE_VERSION} (external, cli)`,
+        "User-Agent": `claude-cli/${getClaudeCodeVersion()} (external, cli)`,
         "anthropic-beta": "oauth-2025-04-20",
       },
       signal: ctrl.signal,
@@ -30,6 +30,8 @@ async function fetchClaudeBootstrap(accessToken) {
       organization_name: acct.organization_name || null,
       organization_type: acct.organization_type || null,
       organization_rate_limit_tier: acct.organization_rate_limit_tier || null,
+      user_rate_limit_tier: acct.user_rate_limit_tier || null,
+      seat_tier: acct.seat_tier || null,
     };
   } catch {
     return null;
@@ -150,6 +152,8 @@ export const claude = {
     if (bs.organization_type) providerSpecificData.organizationType = bs.organization_type;
     if (bs.organization_rate_limit_tier)
       providerSpecificData.organizationRateLimitTier = bs.organization_rate_limit_tier;
+    if (bs.user_rate_limit_tier) providerSpecificData.rateLimitTier = bs.user_rate_limit_tier;
+    if (bs.seat_tier) providerSpecificData.seatTier = bs.seat_tier;
     if (plan) providerSpecificData.plan = plan;
 
     const result: any = {

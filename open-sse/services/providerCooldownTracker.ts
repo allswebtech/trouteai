@@ -11,6 +11,7 @@ import {
   DEFAULT_RESILIENCE_SETTINGS,
   type ResilienceSettings,
 } from "../../src/lib/resilience/settings";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 interface CooldownEntry {
   /** Timestamp of last recorded failure (ms since epoch) */
@@ -29,15 +30,16 @@ const cooldownMap = new Map<string, CooldownEntry>();
 const DEFAULT_ENTRY_RETENTION_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 60 * 1000; // Cleanup every 60s
 
-let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+let cleanupTimer: (() => void) | null = null;
 
 function startCleanupIfNeeded(): void {
   if (cleanupTimer) return;
-  cleanupTimer = setInterval(() => {
-    cleanupExpiredCooldownEntries();
-  }, CLEANUP_INTERVAL_MS);
-  // Allow Node.js to exit even if the timer is running
-  if (cleanupTimer.unref) cleanupTimer.unref();
+  // Pauses while the server is idle: cooldowns are only recorded by requests.
+  cleanupTimer = setIdleAwareInterval(
+    "provider-cooldown-sweep",
+    () => cleanupExpiredCooldownEntries(),
+    CLEANUP_INTERVAL_MS
+  );
 }
 
 function getEntryRetentionMs(settings?: ResilienceSettings): number {

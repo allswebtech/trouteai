@@ -44,6 +44,7 @@ import {
 import { toRecord, toNumber, getFieldValue } from "./scalars.ts";
 import { type UsageQuota, parseResetTime } from "./quota.ts";
 import { fetchAndParseAntigravityWeeklyQuotas } from "./antigravityWeeklyQuota.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 type JsonRecord = Record<string, unknown>;
 type SubscriptionCacheEntry = {
@@ -78,7 +79,10 @@ const _antigravityCreditProbeInflight = new Map<string, Promise<number | null>>(
 // Split out of the shared usage.ts cleanup timer (god-file decomposition): this
 // leaf owns its 4 data caches, so it owns their purge too. The 2 inflight Maps
 // self-clean when their Promise settles, so they are NOT swept here.
-const _antigravityCacheCleanupTimer = setInterval(
+// Pauses while the server is idle: entries are only added by requests, and the next request
+// runs the sweep again.
+setIdleAwareInterval(
+  "antigravity-usage-cache-sweep",
   () => {
     const now = Date.now();
     for (const [key, entry] of _antigravitySubCache) {
@@ -99,7 +103,6 @@ const _antigravityCacheCleanupTimer = setInterval(
   },
   5 * 60 * 1000
 ); // every 5 minutes
-_antigravityCacheCleanupTimer.unref?.(); // Don't prevent process exit
 
 interface AntigravityUsageOptions {
   forceRefresh?: boolean;

@@ -4,6 +4,7 @@ import {
   getProviderLimitsSyncIntervalMs,
   syncAllProviderLimits,
 } from "@/lib/usage/providerLimits";
+import { runUnlessIdle } from "@/lib/idleState";
 
 // On SixPanel a new release starts beside the old one for a moment (two slots, one data
 // folder): wait until the old one has stopped before refreshing accounts from here.
@@ -59,12 +60,14 @@ export function startProviderLimitsSyncScheduler(): void {
       }
     }
 
+    // A cycle asks every provider for its limits. While nobody uses the server it waits for the
+    // next request instead; answers to requests keep the limits current in between.
     startupTimer = setTimeout(() => {
       startupTimer = null;
-      void runProviderLimitsSyncCycle();
+      runUnlessIdle("provider-limits-sync", runProviderLimitsSyncCycle);
 
       schedulerTimer = setInterval(() => {
-        void runProviderLimitsSyncCycle();
+        runUnlessIdle("provider-limits-sync", runProviderLimitsSyncCycle);
       }, intervalMs);
       schedulerTimer.unref?.();
     }, initialDelayMs);

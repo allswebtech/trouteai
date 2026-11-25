@@ -97,7 +97,7 @@ const SECURITY_IMPACTING_KEYS = [
 /**
  * Derive an audit actor string from the inbound request. Falls back to
  * `"dashboard"` for cookie sessions, `"apikey:<id>"` for Bearer API keys,
- * `"cli"` for CLI machine-token sessions, and `"anonymous"` otherwise. Best
+ * `"cli"` for the local command's token (DATA_DIR/cli-token), and `"anonymous"` otherwise. Best
  * effort — any lookup error degrades to `"unknown"` so the audit row still
  * carries actor context.
  */

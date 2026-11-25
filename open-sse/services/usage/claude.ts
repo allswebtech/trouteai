@@ -10,8 +10,12 @@
  */
 
 import { safePercentage } from "@/shared/utils/formatting";
-import { CLAUDE_CODE_VERSION, fetchClaudeBootstrap } from "../../executors/claudeIdentity.ts";
-import { isClaudeOauthUsageCoolingDown, markClaudeOauthUsage429 } from "../claudeUsageCooldown.ts";
+import { fetchClaudeBootstrap, getClaudeCodeVersion } from "../../executors/claudeIdentity.ts";
+import {
+  computeClaudeUsageRetryMs,
+  isClaudeOauthUsageCoolingDown,
+  markClaudeOauthUsage429,
+} from "../claudeUsageCooldown.ts";
 import { toRecord } from "./scalars.ts";
 import { type UsageQuota, parseResetTime } from "./quota.ts";
 
@@ -71,7 +75,7 @@ export async function getClaudeUsage(accessToken?: string) {
           "Accept-Encoding": "gzip, compress, deflate, br",
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
-          "User-Agent": `claude-code/${CLAUDE_CODE_VERSION}`,
+          "User-Agent": `claude-code/${getClaudeCodeVersion()}`,
           "anthropic-beta": "oauth-2025-04-20",
         },
         signal: ctrl.signal,
@@ -144,7 +148,11 @@ export async function getClaudeUsage(accessToken?: string) {
 
     // Cool down OAuth usage polling after a 429 (quota endpoint only — chat is unaffected).
     if (oauthResponse.status === 429) {
-      markClaudeOauthUsage429(accessToken);
+      markClaudeOauthUsage429(
+        accessToken,
+        Date.now(),
+        computeClaudeUsageRetryMs(oauthResponse.headers)
+      );
     }
 
     // Fallback: OAuth endpoint returned non-OK, try legacy settings/org endpoint

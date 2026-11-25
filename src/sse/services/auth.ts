@@ -26,6 +26,7 @@ import {
 import { getQuotaScopeLabelForProvider } from "@trouteai/open-sse/services/antigravityQuotaFamily.ts";
 import { getCreditsMode } from "@trouteai/open-sse/services/antigravityCredits.ts";
 import {
+  statusForModelCooldown,
   isAccountUnavailable,
   getUnavailableUntil,
   getEarliestRateLimitedUntil,
@@ -108,6 +109,8 @@ interface CooldownInspectionState {
   connectionCooldownMs: number | null;
   codexScopeCooldownMs: number | null;
   retryableModelCooldownMs: number | null;
+  modelLockoutReason: string | null;
+  modelLockoutStatus: number | null;
 }
 
 const MIN_QUOTA_THRESHOLD_PERCENT = 1;
@@ -876,6 +879,7 @@ function buildQuotaPreflightRateLimitedResult(
     retryAfterHuman: formatRetryAfter(retryAfter),
     lastError: `All ${provider} accounts blocked by quota preflight`,
     lastErrorCode: 429,
+    cooldownReason: "quota_exhausted",
   };
 }
 
@@ -956,7 +960,7 @@ const PROVIDER_SEARCH_PAIRS: string[][] = [
 /**
  * Resolve provider aliases (e.g., nvidia -> nvidia_nim) for DB lookup
  */
-async function getProviderSearchPool(provider: string): Promise<string[]> {
+export async function getProviderSearchPool(provider: string): Promise<string[]> {
   const canonicalProvider = resolveProviderId(provider);
   const canonicalAlias = getProviderAlias(canonicalProvider);
 
@@ -1352,12 +1356,25 @@ export async function getProviderCredentials(
           connectionCooldownMs,
           codexScopeCooldownMs,
           retryableModelCooldownMs,
+          modelLockoutReason:
+            retryableModelCooldownMs !== null && typeof modelLockout?.reason === "string"
+              ? modelLockout.reason
+              : null,
+          modelLockoutStatus:
+            retryableModelCooldownMs !== null && typeof modelLockout?.status === "number"
+              ? modelLockout.status
+              : null,
         };
       });
 
       const cooldownCandidates = cooldownStates
         .flatMap((state) => {
-          const candidates: Array<{ ms: number; connection: ProviderConnectionView }> = [];
+          const candidates: Array<{
+            ms: number;
+            connection: ProviderConnectionView;
+            lockoutReason?: string | null;
+            lockoutStatus?: number | null;
+          }> = [];
           if (state.connectionCooldownMs !== null) {
             candidates.push({ ms: state.connectionCooldownMs, connection: state.connection });
           }
@@ -1365,7 +1382,12 @@ export async function getProviderCredentials(
             candidates.push({ ms: state.codexScopeCooldownMs, connection: state.connection });
           }
           if (state.retryableModelCooldownMs !== null) {
-            candidates.push({ ms: state.retryableModelCooldownMs, connection: state.connection });
+            candidates.push({
+              ms: state.retryableModelCooldownMs,
+              connection: state.connection,
+              lockoutReason: state.modelLockoutReason,
+              lockoutStatus: state.modelLockoutStatus,
+            });
           }
           return candidates;
         })
@@ -1413,6 +1435,17 @@ export async function getProviderCredentials(
           retryAfterHuman: formatRetryAfter(earliest),
           lastError: earliestConn?.lastError || null,
           lastErrorCode: allBlockedByModelCooldown ? 429 : earliestConn?.errorCode || null,
+          // the status the client gets for this cooldown (lastErrorCode feeds the breaker)
+          cooldownStatus: allBlockedByModelCooldown
+            ? statusForModelCooldown(
+                earliestCandidate?.lockoutReason ?? null,
+                earliestCandidate?.lockoutStatus ?? earliestConn?.errorCode
+              )
+            : null,
+          // what the cooldown stands for ("quota_exhausted" is a used-up usage window)
+          cooldownReason:
+            earliestCandidate?.lockoutReason ??
+            (typeof earliestConn?.lastErrorType === "string" ? earliestConn.lastErrorType : null),
           cooldownScope: allBlockedByModelCooldown ? "model" : "connection",
           cooldownModel: allBlockedByModelCooldown ? requestedModel : null,
           connectionsCount: connections.length,
@@ -1475,6 +1508,7 @@ export async function getProviderCredentials(
         retryAfterHuman: formatRetryAfter(retryAfter),
         lastError: `All ${provider} accounts reached configured quota threshold`,
         lastErrorCode: 429,
+        cooldownReason: "quota_exhausted",
       };
     }
 
@@ -1518,6 +1552,7 @@ export async function getProviderCredentials(
         retryAfterHuman: formatRetryAfter(retryAfter),
         lastError: `All ${provider} accounts have exhausted their quota`,
         lastErrorCode: 429,
+        cooldownReason: "quota_exhausted",
       };
     }
 
@@ -2539,21 +2574,15 @@ export function extractApiKey(request: AuthRequestLike, opts?: { allowUrl?: bool
     }
   }
 
-  // Anthropic Messages API clients authenticate via x-api-key.
-  // Gate the fallback on the anthropic-version header so we don't trip up
-  // local-mode requests from non-Anthropic clients that send placeholder
-  // x-api-key values (which would otherwise be rejected as Invalid API key).
-  const anthropicVersion =
-    readHeaderValue(request?.headers, "anthropic-version") ||
-    readHeaderValue(request?.headers, "Anthropic-Version");
-  if (anthropicVersion) {
-    const xApiKey =
-      readHeaderValue(request?.headers, "x-api-key") ||
-      readHeaderValue(request?.headers, "X-Api-Key");
-    if (typeof xApiKey === "string") {
-      const trimmed = xApiKey.trim();
-      if (trimmed.length > 0) return trimmed;
-    }
+  // x-api-key carries the same key on every route, as the authz pipeline already accepts it
+  // (src/server/authz/policies/clientApi.ts). A placeholder value from a client in local mode
+  // (REQUIRE_API_KEY=false) is not in the key table, so it degrades to anonymous there too.
+  const xApiKey =
+    readHeaderValue(request?.headers, "x-api-key") ||
+    readHeaderValue(request?.headers, "X-Api-Key");
+  if (typeof xApiKey === "string") {
+    const trimmed = xApiKey.trim();
+    if (trimmed.length > 0) return trimmed;
   }
 
   const xGoogApiKey = extractGoogApiKeyHeader(request?.headers);

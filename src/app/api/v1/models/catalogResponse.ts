@@ -25,6 +25,7 @@ import {
 import { isModelCatalogNamesEnabled } from "@/shared/utils/featureFlags";
 import { maybeOmitCatalogModelName } from "./catalogHelpers";
 import { isCodexModelCatalogClient } from "./catalogRequest";
+import { completeCatalogRow } from "./catalogRowFields";
 
 /**
  * Post-filter chain applied AFTER the API-key filter, so variants and mirrors are
@@ -130,14 +131,14 @@ export function finalizeCatalogResponse(
   const enrichedModels = disambiguateCatalogModelNames(
     finalModels.map((model) => {
       if (model.owned_by === "combo") {
-        return maybeOmitCatalogModelName(model, includeModelNames);
+        return maybeOmitCatalogModelName(completeCatalogRow(model), includeModelNames);
       }
       const enriched = enrichCatalogModelEntry(model);
       const fallbackContextLength = getContextFallback(enriched);
       const listedModel = fallbackContextLength
         ? { ...enriched, context_length: fallbackContextLength }
         : enriched;
-      return maybeOmitCatalogModelName(listedModel, includeModelNames);
+      return maybeOmitCatalogModelName(completeCatalogRow(listedModel), includeModelNames);
     })
   );
   // Codex CLI compatibility: its model-catalog refresh (codex_models_manager) does

@@ -33,6 +33,7 @@ import {
   getAppLogRetentionDays,
   getAppLogToFile,
 } from "./logEnv";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 const DEFAULT_ROTATION_CHECK_INTERVAL_MS = 60_000;
 
@@ -51,7 +52,7 @@ export function getAppLogRotationCheckInterval(): number {
 }
 
 /** Module-level timer handle — cleared by closeLogRotation(). */
-let rotationTimer: ReturnType<typeof setInterval> | null = null;
+let rotationTimer: (() => void) | null = null;
 
 export function getLogConfig() {
   const logToFile = getAppLogToFile();
@@ -193,17 +194,15 @@ export function initLogRotation(): void {
   cleanupOverflowLogs(config.logFilePath, config.maxFiles);
 
   const intervalMs = getAppLogRotationCheckInterval();
-  rotationTimer = setInterval(
-    (filePath: string, maxSize: number, maxFiles: number) => {
-      rotateIfNeeded(filePath, maxSize);
-      cleanupOverflowLogs(filePath, maxFiles);
+  // Pauses while the server is idle: the log hardly grows then, and the next request resumes it.
+  rotationTimer = setIdleAwareInterval(
+    "log-rotation",
+    () => {
+      rotateIfNeeded(config.logFilePath, config.maxFileSize);
+      cleanupOverflowLogs(config.logFilePath, config.maxFiles);
     },
-    intervalMs,
-    config.logFilePath,
-    config.maxFileSize,
-    config.maxFiles
+    intervalMs
   );
-  rotationTimer.unref?.();
 }
 
 /**
@@ -212,7 +211,7 @@ export function initLogRotation(): void {
  */
 export function closeLogRotation(): void {
   if (rotationTimer !== null) {
-    clearInterval(rotationTimer);
+    rotationTimer();
     rotationTimer = null;
   }
 }

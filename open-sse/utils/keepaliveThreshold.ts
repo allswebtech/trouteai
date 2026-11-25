@@ -60,3 +60,25 @@ export function resolveKeepaliveThreshold(model: string | undefined | null): num
 
   return DEFAULT_THRESHOLD_MS;
 }
+
+/**
+ * A client that sends `stream: true` but no `Accept: text/event-stream` (the Anthropic and
+ * OpenAI SDKs send `Accept: application/json`) gets no byte until the provider's first token.
+ * A reverse proxy in front of TRouteAI cuts a connection that is silent for its read limit
+ * (often 60 to 120 s), so after this long the early keep-alive stream opens anyway.
+ *
+ * It waits much longer than the threshold above on purpose: until the stream opens, an error
+ * keeps its own HTTP status (a 429 stays a 429), which programs in front of the gateway act on.
+ * TROUTEAI_STREAM_KEEPALIVE_AFTER_MS changes it; 0 turns it off.
+ */
+const DEFAULT_STREAM_FLAG_THRESHOLD_MS = 60_000;
+
+export function resolveStreamFlagKeepaliveThreshold(
+  model: string | undefined | null
+): number | null {
+  const raw = process.env.TROUTEAI_STREAM_KEEPALIVE_AFTER_MS;
+  const parsed = raw == null || raw.trim() === "" ? DEFAULT_STREAM_FLAG_THRESHOLD_MS : Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_STREAM_FLAG_THRESHOLD_MS;
+  if (parsed === 0) return null;
+  return Math.max(Math.floor(parsed), resolveKeepaliveThreshold(model));
+}

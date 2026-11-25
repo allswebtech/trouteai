@@ -39,33 +39,114 @@ export const ANTHROPIC_BETA_CLAUDE_OAUTH = [
 ].join(",");
 
 /**
- * Client-negotiated `anthropic-beta` values that are safe to forward to the
- * claude.ai backend on top of TRouteAI's own set. Kept to betas the backend
- * actually accepts and that TRouteAI does not otherwise emit — so a blind
- * passthrough cannot reintroduce the over-sending fingerprint/rejection bugs.
- * Currently: deferred-tool negotiation and the
- * client's own `[1m]` long-context negotiation (context-1m). selectBetaFlags
- * deliberately emits context-1m only for Opus (never FORCE it — long-context
- * credit gate); forwarding it when the CLIENT negotiated it matches what real
- * Claude Code sends for `/model <id>[1m]` and is required for >200K-context
- * requests on models/accounts where the beta is enforced.
+ * Client-negotiated `anthropic-beta` values that are forwarded on top of TRouteAI's own set.
+ * The list is an allowlist, not a blind passthrough: each entry is a beta Claude Code itself
+ * puts on the wire (read from its 2.1.330 request headers and binary) or one that gates a
+ * body field the passthrough keeps. Without the beta the service refuses the field with
+ * 400 "Extra inputs are not permitted" (or a message naming the beta), so dropping it breaks
+ * the request while the body field still travels:
+ *   - per-turn-control / mid-conversation-output-config: message-level `output_config`
+ *     (effort changed mid-conversation);
+ *   - mid-conversation-tool-changes / inline-tools: tool changes and `tool_addition` blocks
+ *     inside `messages`;
+ *   - thinking-token-count, thinking-display-updates, thinking-binding-controls: thinking
+ *     counters, `thinking.display: "updates"` and `thinking.block_binding`;
+ *   - dangerous-tool-use / afk-mode: the auto-mode classifier pair (`safeguards` field);
+ *   - message-threads: the top-level `thread` field;
+ *   - server-side-fallback (both dates): the top-level `fallbacks` field;
+ *   - fast-mode: the top-level `speed` field;
+ *   - timing, effort, code-execution: per-turn timing, effort and the code tool;
+ *   - tool-search-tool: deferred tools.
+ * Two are gated in `mergeClientAnthropicBeta`: `context-1m` on the model that will answer
+ * (a combo can move a request to a model the beta is refused for) and `skills` on a
+ * code-execution tool in the body (refused without one).
  */
 export const FORWARDABLE_CLIENT_BETAS = Object.freeze([
   "tool-search-tool-2025-10-19",
   "context-1m-2025-08-07",
+  "code-execution-2025-08-25",
+  "skills-2025-10-02",
+  "effort-2025-11-24",
+  "mid-conversation-output-config-2026-07-01",
+  "per-turn-control-2026-07-01",
+  "mid-conversation-tool-changes-2026-07-01",
+  "thinking-token-count-2026-05-13",
+  "thinking-binding-controls-2026-08-01",
+  "thinking-display-updates-2026-08-18",
+  "dangerous-tool-use-2026-09-03",
+  "afk-mode-2026-01-31",
+  "timing-2026-09-09",
+  "inline-tools-2026-09-15",
+  "message-threads-2026-08-12",
+  "server-side-fallback-2026-06-01",
+  "server-side-fallback-2026-07-01",
+  "fast-mode-2026-02-01",
+  // turn-scoped `clear_at` on a system turn kept inside `messages`
+  "mid-conversation-system-clear-at-2026-08-21",
 ]);
 
+export const CONTEXT_1M_BETA = "context-1m-2025-08-07";
+export const SKILLS_BETA = "skills-2025-10-02";
+export const THINKING_DISPLAY_UPDATES_BETA = "thinking-display-updates-2026-08-18";
+
 /**
- * Union an `anthropic-beta` comma-list with the allowlisted client-negotiated
- * betas, preserving base order and appending only NEW tokens (deduped,
- * case-insensitive). The client beta is added only if it is on `allow`, so this
- * never forces betas the client did not request nor leaks betas the backend
- * rejects (for example tool-search-tool being dropped on the Claude OAuth path).
+ * Models the long-context beta is accepted for. Models whose 1M window is native
+ * (Opus 5 and 5.5, Fable 5.1 and 5.2, Haiku 5.5) are not on it.
+ */
+const CONTEXT_1M_BETA_MODELS = [
+  "claude-fable-5",
+  "claude-sonnet-5",
+  "claude-sonnet-5-5",
+  "claude-sonnet-4-6",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-opus-4-6",
+];
+
+/**
+ * True when the model that will answer accepts the long-context beta. A dated alias
+ * (`-20251001`) matches its base id; a newer version does not match an older one
+ * (`claude-fable-5-2` is not `claude-fable-5`).
+ */
+export function modelSupportsContext1mBeta(model: string | null | undefined): boolean {
+  const normalized = String(model || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^.*\//, "")
+    .replace(/-\d{8}$/, "");
+  return CONTEXT_1M_BETA_MODELS.some(
+    (id) =>
+      normalized === id ||
+      (normalized.startsWith(`${id}-`) && !/^\d/.test(normalized.slice(id.length + 1)))
+  );
+}
+
+/** Whether a Claude body declares a code-execution tool (the skills beta needs one). */
+export function hasCodeExecutionTool(body: unknown): boolean {
+  const tools = (body as { tools?: unknown } | null | undefined)?.tools;
+  if (!Array.isArray(tools)) return false;
+  return tools.some((tool) => {
+    const t = tool as { type?: unknown; name?: unknown } | null;
+    if (!t || typeof t !== "object") return false;
+    return (
+      (typeof t.type === "string" && t.type.startsWith("code_execution")) ||
+      t.name === "code_execution"
+    );
+  });
+}
+
+/**
+ * Union an `anthropic-beta` comma-list with the allowlisted client-negotiated betas,
+ * keeping the base order and appending only new tokens (deduped, case-insensitive). A
+ * client beta is added only when it is on `allow`, so this never adds a beta the client did
+ * not send. With `model`, `context-1m` is forwarded only for a model that accepts it; with
+ * `body`, `skills` only when a code-execution tool is declared.
  */
 export function mergeClientAnthropicBeta(
   base: string,
   clientBeta: string | null | undefined,
-  allow: readonly string[] = FORWARDABLE_CLIENT_BETAS
+  allow: readonly string[] = FORWARDABLE_CLIENT_BETAS,
+  gates: { model?: string | null; body?: unknown } = {}
 ): string {
   const baseList = base
     .split(",")
@@ -73,7 +154,19 @@ export function mergeClientAnthropicBeta(
     .filter(Boolean);
   if (typeof clientBeta !== "string" || !clientBeta.trim()) return baseList.join(",");
   const seen = new Set(baseList.map((s) => s.toLowerCase()));
-  const allowSet = new Set(allow.map((s) => s.toLowerCase()));
+  const allowSet = new Set(
+    allow
+      .map((s) => s.toLowerCase())
+      .filter((lower) => {
+        if (lower === CONTEXT_1M_BETA && gates.model) {
+          return modelSupportsContext1mBeta(gates.model);
+        }
+        if (lower === SKILLS_BETA && gates.body !== undefined) {
+          return hasCodeExecutionTool(gates.body);
+        }
+        return true;
+      })
+  );
   for (const token of clientBeta
     .split(",")
     .map((s) => s.trim())

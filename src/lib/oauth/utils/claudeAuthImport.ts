@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
   getProviderConnections,
   createProviderConnection,
@@ -35,12 +36,21 @@ export interface EnrichedClaudeAuth extends ParsedClaudeAuth {
   organizationName: string | null;
   organizationType: string | null;
   rateLimitTier: string | null;
+  seatTier?: string | null;
 }
 
 export interface CreateConnectionOptions {
   name?: string;
   email?: string;
   overwriteExisting?: boolean;
+}
+
+/** The account's stored device id when it has a valid one, else a new one. */
+function deviceIdFor(providerSpecificData: JsonRecord): string {
+  const current = providerSpecificData.cliUserID;
+  return typeof current === "string" && /^[a-f0-9]{64}$/i.test(current)
+    ? current
+    : randomBytes(32).toString("hex");
 }
 
 // ──── Parse & validate ────────────────────────────────────────────────────────
@@ -107,6 +117,7 @@ export async function enrichWithBootstrap(
     organizationName: null,
     organizationType: null,
     rateLimitTier: parsed.rateLimitTier,
+    seatTier: null,
   };
 
   const controller = new AbortController();
@@ -127,13 +138,22 @@ export async function enrichWithBootstrap(
       return base;
     }
 
-    const body = toRecord(await res.json());
+    const raw = toRecord(await res.json());
+    // The bootstrap answer nests the account under `oauth_account` (the sign-in path reads
+    // it there too); a flat answer is still read.
+    const nested = toRecord(raw.oauth_account);
+    const body = Object.keys(nested).length > 0 ? nested : raw;
 
     const accountUUID = toNonEmptyString(body.account_uuid);
     const organizationUUID = toNonEmptyString(body.organization_uuid);
     const organizationName = toNonEmptyString(body.organization_name);
     const organizationType = toNonEmptyString(body.organization_type);
-    const rateLimitTier = toNonEmptyString(body.rate_limit_tier) || parsed.rateLimitTier;
+    const rateLimitTier =
+      toNonEmptyString(body.user_rate_limit_tier) ||
+      toNonEmptyString(body.organization_rate_limit_tier) ||
+      toNonEmptyString(body.rate_limit_tier) ||
+      parsed.rateLimitTier;
+    const seatTier = toNonEmptyString(body.seat_tier);
     const bootstrapEmail = toNonEmptyString(body.account_email);
 
     return {
@@ -143,6 +163,7 @@ export async function enrichWithBootstrap(
       organizationName,
       organizationType,
       rateLimitTier,
+      seatTier,
       email: parsed.email || bootstrapEmail,
     };
   } catch {
@@ -203,6 +224,8 @@ export async function createConnectionFromAuthFile(
         testStatus: "active",
         providerSpecificData: {
           ...toRecord(existing.providerSpecificData),
+          cliUserID: deviceIdFor(toRecord(existing.providerSpecificData)),
+          ...(enriched.seatTier ? { seatTier: enriched.seatTier } : {}),
           accountUUID: enriched.accountUUID,
           organizationUUID: enriched.organizationUUID,
           organizationName: enriched.organizationName,
@@ -243,6 +266,10 @@ export async function createConnectionFromAuthFile(
     isActive: true,
     testStatus: "active",
     providerSpecificData: {
+      // One device id per account, made once and kept across refreshes and restarts (as the
+      // browser sign-in does); without it every token refresh looked like a new device.
+      cliUserID: deviceIdFor({}),
+      ...(enriched.seatTier ? { seatTier: enriched.seatTier } : {}),
       accountUUID: enriched.accountUUID,
       organizationUUID: enriched.organizationUUID,
       organizationName: enriched.organizationName,

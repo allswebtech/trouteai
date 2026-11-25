@@ -2,6 +2,7 @@ import { CORS_HEADERS } from "./cors.ts";
 import { detectFormat } from "../services/provider.ts";
 import { SKIP_PATTERNS } from "../config/constants.ts";
 import { createNonStreamingResponse, createStreamingResponse } from "./bypassResponse.ts";
+import { bodyRequestsStream } from "./aiSdkCompat.ts";
 
 /**
  * Check for bypass patterns — return fake response without calling provider.
@@ -82,7 +83,7 @@ export function handleBypassRequest(body, model, userAgent = "") {
   if (!shouldBypass) return null;
 
   const sourceFormat = detectFormat(body);
-  const stream = body.stream !== false;
+  const stream = bodyRequestsStream(body);
 
   return stream
     ? createStreamingResponse(sourceFormat, model)

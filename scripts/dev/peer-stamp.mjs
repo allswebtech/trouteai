@@ -41,6 +41,13 @@ export const VIA_PROXY_HEADER = "x-trouteai-via-proxy";
  */
 export const CLIENT_IP_HEADER = "x-trouteai-client-ip";
 
+/**
+ * The pipeline's locality verdict (AUTHZ_HEADER_PEER_LOCALITY in src/server/authz/headers.ts).
+ * Route handlers trust it, so a client copy is removed here too, on every path, even one the
+ * pipeline does not run on.
+ */
+export const PEER_LOCALITY_HEADER = "x-trouteai-peer-locality";
+
 /** Generate (once) and return the per-process stamp token, persisting it in env
  *  so the middleware running in the same process reads the identical value. */
 export function ensurePeerStampToken() {
@@ -59,6 +66,7 @@ export function stampPeerIp(req) {
     delete req.headers[PEER_IP_HEADER];
     delete req.headers[VIA_PROXY_HEADER];
     delete req.headers[CLIENT_IP_HEADER];
+    delete req.headers[PEER_LOCALITY_HEADER];
     const ip = req.socket && req.socket.remoteAddress;
     if (ip) {
       const token = ensurePeerStampToken();

@@ -4,6 +4,8 @@
 //
 // Usage: node e2e.mjs <base-url> <admin-password> [mock-upstream-url]
 //   PAGES=/dashboard,/dashboard/providers,...  pages to open (default: a short list)
+import http from "node:http";
+
 const [base, password, mockUrl = "http://127.0.0.1:20997/v1"] = process.argv.slice(2);
 if (!base || !password) {
   console.error("Usage: node e2e.mjs <base-url> <admin-password> [mock-upstream-url]");
@@ -305,6 +307,164 @@ check(
   "default favicon fallback works (logged in)",
   favicon.status === 307 && favicon.headers.get("location") === "/favicon.svg",
   `status ${favicon.status}`
+);
+
+// White-label before sign-in: the sign-in page reads the custom name from the public sign-in
+// status, and the tab icon route answers a signed-out browser too.
+const named = await api("/api/settings", {
+  method: "PATCH",
+  body: { instanceName: "Smoke Gateway" },
+});
+const statusAnon = await fetch(base + "/api/settings/require-login", {
+  signal: AbortSignal.timeout(60_000),
+});
+const statusJson = await statusAnon.json().catch(() => ({}));
+check(
+  "sign-in status carries the custom name",
+  named.status === 200 && statusJson.instanceName === "Smoke Gateway",
+  `status ${named.status}, name ${statusJson.instanceName}`
+);
+await api("/api/settings", { method: "PATCH", body: { instanceName: "" } });
+const faviconAnon = await fetch(base + "/api/settings/favicon", {
+  redirect: "manual",
+  signal: AbortSignal.timeout(60_000),
+});
+check(
+  "favicon route answers a signed-out browser",
+  faviconAnon.status === 307 && faviconAnon.headers.get("location") === "/favicon.svg",
+  `status ${faviconAnon.status}`
+);
+
+// Only the body's `stream: true` gets an event stream; absent or false gets one JSON answer,
+// whatever the Accept header says (the OpenAI and Anthropic APIs default `stream` to false).
+// node:http sends exactly the headers given: fetch would always add `Accept: */*`.
+function rawPost(path, body, headers) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(base + path);
+    const req = http.request(
+      url,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        timeout: 60_000,
+      },
+      (res) => {
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => (text += chunk));
+        res.on("end", () =>
+          resolve({ status: res.statusCode, type: String(res.headers["content-type"] || ""), text })
+        );
+      }
+    );
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+    req.on("error", reject);
+    req.end(JSON.stringify(body));
+  });
+}
+
+function parseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+const dialects = [
+  {
+    path: "/v1/chat/completions",
+    body: { model: "smoke-combo", messages: hello },
+    json: (j) => j?.object === "chat.completion" && !!j.choices?.[0]?.message,
+    sse: (t) => t.includes("chat.completion.chunk") && t.includes("data: [DONE]"),
+  },
+  {
+    path: "/v1/messages",
+    body: { model: "smoke-combo", max_tokens: 50, messages: hello },
+    json: (j) => j?.type === "message" && Array.isArray(j.content),
+    sse: (t) => t.includes("event: message_start") && t.includes("event: message_stop"),
+  },
+  {
+    path: "/v1/responses",
+    body: { model: "smoke-combo", input: "hi" },
+    json: (j) => j?.object === "response" && Array.isArray(j.output),
+    sse: (t) => t.includes("event: response.created") && t.includes("event: response.completed"),
+  },
+];
+const streamValues = [true, false, undefined];
+const acceptValues = [undefined, "*/*", "application/json", "text/event-stream"];
+const matrix = [];
+for (const d of dialects) {
+  for (const streamValue of streamValues) {
+    for (const accept of acceptValues) {
+      matrix.push({ d, streamValue, accept });
+    }
+  }
+}
+const matrixResults = await Promise.all(
+  matrix.map(async ({ d, streamValue, accept }) => {
+    const body = streamValue === undefined ? d.body : { ...d.body, stream: streamValue };
+    const headers = { ...auth, ...(accept ? { accept } : {}) };
+    try {
+      return await rawPost(d.path, body, headers);
+    } catch (error) {
+      return { status: 0, type: "", text: String(error) };
+    }
+  })
+);
+matrix.forEach(({ d, streamValue, accept }, i) => {
+  const res = matrixResults[i];
+  const wantSse = streamValue === true;
+  const shapeOk = wantSse
+    ? res.type.includes("text/event-stream") && d.sse(res.text)
+    : res.type.includes("application/json") && d.json(parseJson(res.text));
+  check(
+    `${d.path} stream ${streamValue === undefined ? "absent" : streamValue}, Accept ${
+      accept ?? "none"
+    } -> ${wantSse ? "event stream" : "JSON"}`,
+    res.status === 200 && shapeOk,
+    `status ${res.status}, ${res.type || "no content type"}`
+  );
+});
+
+// A key set to the old "JSON Compatible" stream setting answers the same way.
+const jsonKey = await api("/api/keys", { method: "POST", body: { name: "smoke-json-key" } });
+const jsonKeyId = jsonKey.json?.id || jsonKey.json?.key?.id || jsonKey.json?.apiKey?.id;
+const jsonKeySet = jsonKeyId
+  ? await api(`/api/keys/${jsonKeyId}`, { method: "PATCH", body: { streamDefaultMode: "json" } })
+  : { status: 0 };
+check(
+  "set a key to the JSON stream setting",
+  jsonKeySet.status === 200,
+  `status ${jsonKeySet.status}`
+);
+const jsonKeyAuth = { authorization: `Bearer ${jsonKey.json?.key}` };
+for (const [streamValue, accept, wantSse] of [
+  [undefined, "text/event-stream", false],
+  [true, "application/json", true],
+]) {
+  const body = { model: "smoke-combo", messages: hello };
+  if (streamValue !== undefined) body.stream = streamValue;
+  const res = await rawPost("/v1/chat/completions", body, { ...jsonKeyAuth, accept });
+  check(
+    `JSON-setting key, stream ${streamValue ?? "absent"}, Accept ${accept} -> ${
+      wantSse ? "event stream" : "JSON"
+    }`,
+    res.status === 200 && res.type.includes(wantSse ? "text/event-stream" : "application/json"),
+    `status ${res.status}, ${res.type}`
+  );
+}
+
+// The Ollama chat API streams by default, so the Ollama route still does.
+const ollama = await rawPost(
+  "/v1/api/chat",
+  { model: "smoke-combo", messages: hello },
+  { ...auth, accept: "*/*" }
+);
+check(
+  "Ollama chat with no stream field still streams",
+  ollama.status === 200 && ollama.text.includes('"done":true') && ollama.text.includes("mock"),
+  `status ${ollama.status}, ${ollama.type}`
 );
 
 const failed = results.filter((ok) => !ok).length;

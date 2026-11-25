@@ -320,6 +320,19 @@ export const updateSettingsSchema = z.object({
   lkgpEnabled: z.boolean().optional(),
   // Echo the requested alias/combo name in the response model field (opt-in)
   echoRequestedModelName: z.boolean().optional(),
+  // Built-in swaps: each answers with a different model than the one asked for, so each is off
+  // unless stored as true
+  modelFamilyFallback: z.boolean().optional(),
+  answerRetiredModelsWithSuccessor: z.boolean().optional(),
+  bareModelUsesConnectionDefault: z.boolean().optional(),
+  // The user's own last resort when every step of a combo failed (read by the chat handler);
+  // empty = none. Its answers are marked global.
+  globalFallbackModel: z.string().max(200).optional(),
+  // Claude Code version the subscription path presents (empty = environment, then the pin)
+  claudeCodeClientVersion: z
+    .string()
+    .regex(/^(\d{1,4}\.\d{1,4}\.\d{1,5})?$/, "Use a version like 2.1.330")
+    .optional(),
   // Layer 2: CCR-style Router.webSearch — when a request carries a native
   // web_search server tool, route the whole request to this model/provider instead of
   // the default (for providers that don't implement Anthropic's web_search server tool).

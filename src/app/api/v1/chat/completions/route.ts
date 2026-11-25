@@ -5,14 +5,17 @@ import { generateRequestId } from "@/shared/utils/requestId";
 import { errorResponse } from "@trouteai/open-sse/utils/error.ts";
 import { initTranslators } from "@trouteai/open-sse/translator/index.ts";
 import { createInjectionGuard } from "@/middleware/promptInjectionGuard";
-import { acceptHeaderForcesStream } from "@trouteai/open-sse/utils/aiSdkCompat.ts";
+import { bodyRequestsStream } from "@trouteai/open-sse/utils/aiSdkCompat.ts";
 import {
   OPENAI_CHAT_ERROR_FRAME,
   OPENAI_KEEPALIVE_FRAME,
   OPENAI_STARTUP_FRAME,
   withEarlyStreamKeepalive,
 } from "@trouteai/open-sse/utils/earlyStreamKeepalive";
-import { resolveKeepaliveThreshold } from "@trouteai/open-sse/utils/keepaliveThreshold";
+import {
+  resolveKeepaliveThreshold,
+  resolveStreamFlagKeepaliveThreshold,
+} from "@trouteai/open-sse/utils/keepaliveThreshold";
 import {
   admitChatRequest,
   admitChatStructure,
@@ -168,23 +171,29 @@ export async function POST(request) {
       console.error("[SECURITY] Prompt injection guard failed:", error);
     }
 
-    // Gate the early SSE keepalive wrapper: only wrap when the client explicitly
-    // asks for streaming (body `stream: true`) or the Accept header forces SSE.
-    // The parsed body is passed through UNTOUCHED — the actual stream/JSON framing
-    // stays decided by chatCore/resolveStreamFlag (legacy streaming default and the
-    // per-key `streamDefaultMode: "json"` opt-in are preserved).
-    const parsedBodyIsRecord = isRecord(parsedBody);
-    const acceptHeader = request.headers.get("accept") || "";
-    const acceptForcesStream =
-      parsedBodyIsRecord && acceptHeaderForcesStream(acceptHeader, parsedBody.stream);
-    const wantsStreaming = (parsedBodyIsRecord && parsedBody.stream === true) || acceptForcesStream;
+    // Only a request that will be answered with a stream gets the early keepalive
+    // wrapper; the rule is the body's `stream` field (see resolveStreamFlag). Once the
+    // wrapper has sent its first frame the answer is a 200 for good, so a later failure (a
+    // 429 with its retry-after and limit headers, a 402, a 5xx) can only be an error event.
+    // So the short delay is used only when the Accept header names text/event-stream; a
+    // client that does not (the OpenAI SDK sends application/json) gets the long delay of
+    // resolveStreamFlagKeepaliveThreshold and keeps the real HTTP status in the usual time.
+    const wantsStreaming = bodyRequestsStream(parsedBody);
+    const acceptsEventStream = String(request.headers?.get?.("accept") || "")
+      .toLowerCase()
+      .includes("text/event-stream");
+    const keepaliveThresholdMs = !wantsStreaming
+      ? null
+      : acceptsEventStream
+        ? resolveKeepaliveThreshold(parsedBody?.model)
+        : resolveStreamFlagKeepaliveThreshold(parsedBody?.model);
 
     // Capture the compression request header once so we can echo it back
     // on the response when internal early-returns (idempotency cache, some combo
     // paths) drop the meta the docs promise.
     const compressionRequestHeader = readCompressionRequestHeader(request);
 
-    if (wantsStreaming) {
+    if (keepaliveThresholdMs !== null) {
       const reqId = generateRequestId();
       // Wrap the real handler response, not the synthetic early-keepalive response. If the
       // client cancels while handleChat is still pending, earlyStreamKeepalive will cancel the
@@ -195,7 +204,7 @@ export async function POST(request) {
       );
       const streamedResponse = await withEarlyStreamKeepalive(handlerResponse, {
         signal: request.signal,
-        thresholdMs: resolveKeepaliveThreshold(parsedBody?.model),
+        thresholdMs: keepaliveThresholdMs,
         keepaliveFrame: OPENAI_KEEPALIVE_FRAME,
         startupFrame: OPENAI_STARTUP_FRAME,
         errorFrame: OPENAI_CHAT_ERROR_FRAME,

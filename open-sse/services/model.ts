@@ -1,5 +1,6 @@
 import { PROVIDER_ID_TO_ALIAS, PROVIDER_MODELS } from "../config/providerModels.ts";
 import { resolveWildcardAlias } from "./wildcardRouter.ts";
+import { isRetiredModelSuccessorsEnabled } from "./modelDeprecation.ts";
 
 type ProviderModelAliasMap = Record<string, Record<string, string>>;
 type ModelAliasValue = string | { provider?: string; model?: string };
@@ -53,8 +54,6 @@ const PROVIDER_MODEL_ALIASES: ProviderModelAliasMap = {
   github: {
     "claude-4.5-opus": "claude-opus-4-5-20251101",
     "claude-opus-4.5": "claude-opus-4-5-20251101",
-    "gemini-3-pro": "gemini-3.1-pro-preview",
-    "gemini-3-pro-preview": "gemini-3.1-pro-preview",
     "gemini-3-flash": "gemini-3-flash-preview",
     "raptor-mini": "oswe-vscode-prime",
   },
@@ -86,6 +85,16 @@ const PROVIDER_MODEL_ALIASES: ProviderModelAliasMap = {
     "claude-sonnet-4-6": "claude-sonnet-4.6",
     "claude-sonnet-4-5": "claude-sonnet-4.5",
     "claude-haiku-4-5": "claude-haiku-4.5",
+  },
+};
+
+// Provider-scoped entries that answer one model's name with a NEWER model (Gemini 3 Pro asked,
+// 3.1 Pro answers). They apply only when the user turned on "answer retired model names with
+// their successor"; the table above holds only other spellings of the same model.
+const PROVIDER_MODEL_SUCCESSORS: ProviderModelAliasMap = {
+  github: {
+    "gemini-3-pro": "gemini-3.1-pro-preview",
+    "gemini-3-pro-preview": "gemini-3.1-pro-preview",
   },
 };
 
@@ -153,32 +162,49 @@ export function resolveProviderAlias(aliasOrId: string | null | undefined): stri
   return current;
 }
 
+const isAutoPlaceholder = (value: unknown) =>
+  typeof value === "string" && value.trim().toLowerCase() === "auto";
+
 /**
  * Resolve a bare model name to the selected connection's `defaultModel`.
  *
- * When the client requested a bare model name (no "/", e.g. an alias that
- * resolved to "auto") and the chosen connection declares a `defaultModel`, the
- * upstream provider must receive that concrete model ID instead of the
- * placeholder. A "/"-qualified model name is an explicit provider/model choice
- * and is always returned untouched.
+ * The connection's default answers only a request that named no model of its own: no model,
+ * the name `auto`, or a name that resolved to the `auto` placeholder (an alias the user made).
+ * Any other bare name is the model the client asked for and goes on as is, so a name nothing
+ * serves ends in the provider's model-not-found error instead of another model's answer.
+ * `anyBareName` (setting `bareModelUsesConnectionDefault: true`) brings back the old rule:
+ * every bare name gets the default. A "/"-qualified name is always returned untouched.
  *
- * Pure function — `requestedModelStr` is the raw client-facing model string
- * (used only to decide whether the name is "bare"); `resolvedModel` is the
- * already-resolved model that would otherwise be sent upstream.
+ * Pure function — `requestedModelStr` is the raw client-facing model string; `resolvedModel`
+ * is the already-resolved model that would otherwise be sent upstream.
  */
 export function resolveBareModelToConnectionDefault(
   requestedModelStr: string | null | undefined,
   resolvedModel: string | null | undefined,
-  connectionDefaultModel: string | null | undefined
+  connectionDefaultModel: string | null | undefined,
+  options: { anyBareName?: boolean } = {}
 ): string | null {
   const fallback = typeof resolvedModel === "string" ? resolvedModel : null;
-  if (typeof requestedModelStr !== "string" || requestedModelStr.includes("/")) {
+  if (typeof requestedModelStr === "string" && requestedModelStr.includes("/")) {
     return fallback;
   }
-  if (typeof connectionDefaultModel === "string" && connectionDefaultModel.length > 0) {
-    return connectionDefaultModel;
+  if (typeof connectionDefaultModel !== "string" || connectionDefaultModel.length === 0) {
+    return fallback;
   }
+  const namedNoModel =
+    typeof requestedModelStr !== "string" ||
+    requestedModelStr.trim() === "" ||
+    isAutoPlaceholder(requestedModelStr) ||
+    isAutoPlaceholder(resolvedModel);
+  if (namedNoModel || options.anyBareName === true) return connectionDefaultModel;
   return fallback;
+}
+
+/** True when the user stored `bareModelUsesConnectionDefault: true` (the old rule). */
+export function isBareModelConnectionDefaultForAnyName(
+  settings: Record<string, unknown> | null | undefined
+): boolean {
+  return settings?.bareModelUsesConnectionDefault === true;
 }
 
 function isCrossProxyModelCompatEnabled() {
@@ -221,7 +247,12 @@ function resolveProviderModelAlias(
   const providerId = resolveProviderAlias(providerOrAlias);
   if (typeof providerId !== "string") return modelId;
   const aliases = PROVIDER_MODEL_ALIASES[providerId];
-  return aliases?.[modelId] || modelId;
+  if (aliases?.[modelId]) return aliases[modelId];
+  if (isRetiredModelSuccessorsEnabled()) {
+    const successor = PROVIDER_MODEL_SUCCESSORS[providerId]?.[modelId];
+    if (successor) return successor;
+  }
+  return modelId;
 }
 
 function hasKnownProviderModel(providerOrAlias: string | null | undefined, modelId: string | null) {

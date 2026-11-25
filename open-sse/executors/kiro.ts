@@ -61,6 +61,15 @@ type KiroStreamState = {
   hasContextUsage?: boolean;
   hasMeteringEvent?: boolean;
   usage?: UsageSummary;
+  // Counts from `metadataEvent.usage`. What the real service puts there has not been seen yet,
+  // so they stay apart and are used only when neither metricsEvent nor the context-usage
+  // estimate gave a prompt count (kiroUsageFromMetadata).
+  metadataUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+  };
   hasReasoningContent?: boolean;
   reasoningChunkCount?: number;
   // Kiro's own stop reason from `metadataEvent` (END_TURN, MAX_TOKENS, CONTENT_FILTERED, ...).
@@ -128,6 +137,39 @@ export function flushBufferedToolArgs(
   state.toolArgsBuffered.clear();
 }
 
+/**
+ * Give tool calls that received no input a parseable `"{}"` at the end of the answer. Kiro sends
+ * no input for a tool without parameters (or one whose optional parameters were all left out),
+ * so the client would reassemble `""`, which strict OpenAI clients reject; OpenAI itself sends
+ * `"{}"`. Only at the end: earlier, a late argument fragment could still follow.
+ */
+export function flushEmptyToolCallArgs(
+  state: Pick<KiroStreamState, "seenToolIds" | "toolArgsEmitted">,
+  controller: { enqueue: (chunk: Uint8Array) => void },
+  ctx: { responseId: string; created: number; model: string }
+): void {
+  if (!state.seenToolIds || state.seenToolIds.size === 0) return;
+  for (const [toolCallId, toolIndex] of state.seenToolIds) {
+    const emitted = state.toolArgsEmitted.get(toolCallId) || "";
+    if (emitted.trim() !== "") continue;
+    const argsChunk: JsonRecord = {
+      id: ctx.responseId,
+      object: "chat.completion.chunk",
+      created: ctx.created,
+      model: ctx.model,
+      choices: [
+        {
+          index: 0,
+          delta: { tool_calls: [{ index: toolIndex, function: { arguments: "{}" } }] },
+          finish_reason: null,
+        },
+      ],
+    };
+    controller.enqueue(TEXT_ENCODER.encode(`data: ${JSON.stringify(argsChunk)}\n\n`));
+    state.toolArgsEmitted.set(toolCallId, emitted + "{}");
+  }
+}
+
 function buildKiroFinishChunk(
   state: KiroStreamState,
   responseId: string,
@@ -169,14 +211,56 @@ function buildKiroFinishChunk(
 /** An error inside a Kiro answer, as the client should see it (OpenAI-shaped `error`). */
 export type KiroStreamError = { status: number; type: string; code: string; message: string };
 
+const KIRO_CAPACITY_REASON = "INSUFFICIENT_MODEL_CAPACITY";
+
+function isKiroCapacityReason(reason: unknown): boolean {
+  return typeof reason === "string" && reason.toUpperCase() === KIRO_CAPACITY_REASON;
+}
+
+/**
+ * Kiro's HTTP error for a model without room (`reason: INSUFFICIENT_MODEL_CAPACITY`, sent with
+ * 429) as a 529 overload, so the core tries another account or step without marking this
+ * account as rate limited. Any other response is returned as it is.
+ */
+export async function kiroCapacityErrorAsOverload(response: Response): Promise<Response> {
+  if (response.ok || response.status === 529) return response;
+  const text = await response
+    .clone()
+    .text()
+    .catch(() => "");
+  if (!text.toUpperCase().includes(KIRO_CAPACITY_REASON)) return response;
+  let message = "";
+  try {
+    const parsed = JSON.parse(text) as JsonRecord;
+    message = typeof parsed?.message === "string" ? parsed.message : "";
+  } catch {
+    // Not JSON: the fixed message below is used.
+  }
+  await response.body?.cancel().catch(() => {});
+  const error = kiroStreamErrorOf("ThrottlingException", message, KIRO_CAPACITY_REASON);
+  return new Response(JSON.stringify({ message: error.message, reason: error.code }), {
+    status: error.status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 /**
  * A Kiro EventStream exception (`:message-type` exception / error) as the error the client gets,
  * by the AWS exception type (CodeWhisperer streaming: ThrottlingException, ValidationException,
  * AccessDeniedException, InternalServerException, ...).
  */
-export function kiroStreamErrorOf(exceptionType: string, message: string): KiroStreamError {
+export function kiroStreamErrorOf(
+  exceptionType: string,
+  message: string,
+  reason: unknown = ""
+): KiroStreamError {
   const t = exceptionType.toLowerCase();
   const text = (message || "").trim() || `Kiro stopped the answer (${exceptionType || "error"})`;
+  // The model has no room right now (Kiro sends it as a ThrottlingException): an overload of the
+  // model, not a limit of the account, so it must not cool the account down.
+  if (isKiroCapacityReason(reason)) {
+    return { status: 529, type: "overloaded_error", code: KIRO_CAPACITY_REASON, message: text };
+  }
   if (t.includes("throttl") || t.includes("quota")) {
     return { status: 429, type: "rate_limit_error", code: exceptionType, message: text };
   }
@@ -541,7 +625,8 @@ export async function peekKiroRefusal(response: Response): Promise<{
             typeof p?.message === "string" ? p.message : event.headers[":error-message"] || "";
           exception = kiroStreamErrorOf(
             event.headers[":exception-type"] || event.headers[":error-code"] || "",
-            text
+            text,
+            p?.reason
           );
           decided = true;
           break;
@@ -607,6 +692,40 @@ export async function peekKiroRefusal(response: Response): Promise<{
 }
 
 function ensureKiroUsage(state: KiroStreamState, model = "") {
+  const metricsOutput = state.usage?.completion_tokens || 0;
+  fillKiroUsage(state, model);
+  if (state.usage && state.usage.prompt_tokens > 0) return;
+  const fromMetadata = kiroUsageFromMetadata(state, metricsOutput);
+  if (fromMetadata) state.usage = fromMetadata;
+}
+
+/**
+ * The usage from `metadataEvent.usage`, for an answer where neither a metricsEvent nor the
+ * context-usage estimate gave a prompt count (before, that answer reported zero or nothing). Its
+ * cache counts are attached only here, so numbers of two sources are never mixed in one usage. An
+ * output count from a metricsEvent stays; else the frame's own, else the estimate from the length.
+ */
+function kiroUsageFromMetadata(state: KiroStreamState, metricsOutput: number): UsageSummary | null {
+  const meta = state.metadataUsage;
+  if (!meta || meta.inputTokens <= 0) return null;
+  const completion =
+    metricsOutput > 0
+      ? metricsOutput
+      : meta.outputTokens > 0
+        ? meta.outputTokens
+        : state.usage?.completion_tokens || 0;
+  return {
+    prompt_tokens: meta.inputTokens,
+    completion_tokens: completion,
+    total_tokens: meta.inputTokens + completion,
+    ...(meta.cacheReadTokens > 0 && { cache_read_input_tokens: meta.cacheReadTokens }),
+    ...(meta.cacheCreationTokens > 0 && {
+      cache_creation_input_tokens: meta.cacheCreationTokens,
+    }),
+  };
+}
+
+function fillKiroUsage(state: KiroStreamState, model: string) {
   // Output estimate covers text, reasoning, code and tool calls (names + final args). Claude's
   // tokenizer makes about 2.5 characters a token (5.x), not 3.5 (config/claudeTokens.ts).
   const charsPerToken = claudeCharsPerToken(model);
@@ -881,6 +1000,7 @@ export class KiroExecutor extends BaseExecutor {
     }
 
     if (!response.ok) {
+      response = await kiroCapacityErrorAsOverload(response);
       return { response, url, headers, transformedBody };
     }
 
@@ -1173,7 +1293,9 @@ export class KiroExecutor extends BaseExecutor {
                     `[Kiro] ${model} answer stopped by ${state.exception}: frames ${JSON.stringify(state.frameCounts)}; sent to the client as an error`
                   );
                   state.finishEmitted = true;
-                  controller.enqueue(kiroErrorChunk(kiroStreamErrorOf(exceptionType, text)));
+                  controller.enqueue(
+                    kiroErrorChunk(kiroStreamErrorOf(exceptionType, text, p?.reason))
+                  );
                   controller.terminate();
                   return;
                 }
@@ -1531,6 +1653,32 @@ export class KiroExecutor extends BaseExecutor {
                 }
               }
             }
+
+            // `metadataEvent.usage` (cache counts named cacheReadInputTokens /
+            // cacheWriteInputTokens): kept apart, used only as a fallback at the end.
+            if (eventType === "metadataEvent") {
+              const p = event.payload as JsonRecord | undefined;
+              const u = (p?.usage || (p?.metadataEvent as JsonRecord | undefined)?.usage) as
+                JsonRecord | undefined;
+              if (u && typeof u === "object") {
+                const firstNumber = (...values: unknown[]) =>
+                  (values.find((v) => typeof v === "number" && v > 0) as number | undefined) || 0;
+                state.metadataUsage = {
+                  inputTokens: firstNumber(u.inputTokens, u.prompt_tokens),
+                  outputTokens: firstNumber(u.outputTokens, u.completion_tokens),
+                  cacheReadTokens: firstNumber(
+                    u.cacheReadInputTokens,
+                    u.cacheReadTokens,
+                    u.cache_read_input_tokens
+                  ),
+                  cacheCreationTokens: firstNumber(
+                    u.cacheWriteInputTokens,
+                    u.cacheCreationTokens,
+                    u.cache_creation_input_tokens
+                  ),
+                };
+              }
+            }
           }
 
           if (iterations >= maxIterations) {
@@ -1542,6 +1690,8 @@ export class KiroExecutor extends BaseExecutor {
           // Flush any buffered tool arguments (partial-object payloads) before finishing —
           // idempotent against toolArgsEmitted if messageStopEvent already flushed them.
           flushBufferedToolArgs(state, controller, { responseId, created, model });
+          // A tool call that never received input still has `arguments: ""`; send "{}".
+          flushEmptyToolCallArgs(state, controller, { responseId, created, model });
 
           // Drain any pending inline-thinking tag fragment so we don't drop
           // trailing characters when the stream ends mid-tag (e.g. `<thi`).

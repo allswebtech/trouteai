@@ -61,6 +61,8 @@ export type PersistAttemptLogsContext = {
    * explicitly present (never synthesized from skillRequestId) — persisted as call_logs.session_tag
    * for per-session cost attribution. */
   sessionTag?: string | null;
+  /** Why this answer is not the first choice, read when the row is written. */
+  answerFallback?: () => { fallback: string; attempts: number };
 };
 
 function toConnectionId(value: unknown): string | null {
@@ -176,6 +178,7 @@ export function persistAttemptLogs(args: PersistAttemptLogsArgs, ctx: PersistAtt
     correlationId,
     modelPinned,
     sessionTag,
+    answerFallback,
   } = ctx;
   const initialConnectionId = toConnectionId(connectionId);
   const finalConnectionId = toConnectionId(credentials?.connectionId) || initialConnectionId;
@@ -276,6 +279,10 @@ export function persistAttemptLogs(args: PersistAttemptLogsArgs, ctx: PersistAtt
     correlationId,
     modelPinned: modelPinned || false,
     sessionTag: sessionTag || null,
+    ...(() => {
+      const facts = answerFallback?.();
+      return { fallback: facts?.fallback || null, fallbackAttempts: facts?.attempts ?? 0 };
+    })(),
   }).catch(() => {});
 
   // Emit the terminal request-lifecycle event to the live dashboard bus. `request.started`

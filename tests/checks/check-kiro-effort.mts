@@ -162,5 +162,29 @@ check(
   `reasoning_effort=${toOpenAI.reasoning_effort}`
 );
 
+// Sampling fields: a Claude model that refuses them gets none, even with no effort and no
+// thinking; a Kiro model that takes them (GPT-5.6, Haiku 4.5) keeps the client's values.
+for (const [model, wantSent] of [
+  ["claude-opus-5.5", false],
+  ["claude-sonnet-5", false],
+  ["claude-fable-5", false],
+  ["gpt-5.6-sol", true],
+  ["claude-haiku-4.5", true],
+] as const) {
+  const payload = buildKiroPayload(
+    model,
+    { messages, temperature: 0.3, top_p: 0.9 },
+    false,
+    { providerSpecificData: {} }
+  ) as Record<string, any>;
+  const cfg = payload?.inferenceConfig;
+  const sent = cfg?.temperature !== undefined || cfg?.topP !== undefined;
+  check(
+    `${model} with temperature and top_p, no effort: sampling fields ${wantSent ? "kept" : "left out"}`,
+    wantSent ? cfg?.temperature === 0.3 && cfg?.topP === 0.9 : !sent,
+    `inferenceConfig=${JSON.stringify(cfg ?? null)}`
+  );
+}
+
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");
 process.exit(failed ? 1 : 0);

@@ -3,11 +3,15 @@ import { withAnthropicErrorShape } from "@/shared/utils/anthropicErrorShape";
 import { initTranslators } from "@trouteai/open-sse/translator/index.ts";
 import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 import { requireJsonContentType } from "@/shared/middleware/requireJsonContentType";
+import { bodyRequestsStream } from "@trouteai/open-sse/utils/aiSdkCompat.ts";
 import {
   withEarlyStreamKeepalive,
   ANTHROPIC_PING_FRAME,
 } from "@trouteai/open-sse/utils/earlyStreamKeepalive";
-import { resolveKeepaliveThreshold } from "@trouteai/open-sse/utils/keepaliveThreshold";
+import {
+  resolveKeepaliveThreshold,
+  resolveStreamFlagKeepaliveThreshold,
+} from "@trouteai/open-sse/utils/keepaliveThreshold";
 
 let initialized = false;
 
@@ -53,29 +57,49 @@ async function postHandler(request: any, context: any, preParsedBody: any = null
   // the response until the first useful upstream byte (ensureStreamReadiness), so keep
   // the connection warm with early keepalives during that gap — same wrapper used by
   // /v1/responses. Anthropic clients ignore SSE comments for their watchdog, so
-  // emit a real `event: ping` (ANTHROPIC_PING_FRAME). Non-streaming callers keep the
-  // verbatim path.
-  const accept = String(request.headers?.get?.("accept") || "").toLowerCase();
-  if (accept.includes("text/event-stream")) {
-    let model;
+  // emit a real `event: ping` (ANTHROPIC_PING_FRAME).
+  // Whether the answer is a stream is decided by the body's `stream` field alone (see
+  // resolveStreamFlag). The wrapper is used only when the body asks for a stream AND the
+  // Accept header names text/event-stream. Once the wrapper has sent its first ping, the
+  // answer is a 200 for good, so a failure that comes later (a 429 with its retry-after
+  // and limit headers, a 402, a 5xx) can only reach the client as an error event. A client
+  // that does not ask for an event stream in Accept keeps the real HTTP status, which
+  // programs in front of the gateway act on (for example, moving to another account on a
+  // 429). The body parsed here is handed on so it is read once.
+  let body = preParsedBody;
+  if (body == null) {
     try {
-      const body =
-        preParsedBody ??
-        (await request
-          .clone()
-          .json()
-          .catch(() => null));
-      model = body?.model;
+      body = await request
+        .clone()
+        .json()
+        .catch(() => null);
     } catch {
-      // body unavailable / non-JSON — fall back to the default keepalive threshold
+      body = null;
     }
-    return await withEarlyStreamKeepalive(handleChat(request, null, preParsedBody), {
+  }
+  const accept = String(request.headers?.get?.("accept") || "").toLowerCase();
+  if (bodyRequestsStream(body) && accept.includes("text/event-stream")) {
+    const model = body?.model;
+    return await withEarlyStreamKeepalive(handleChat(request, null, body), {
       signal: request.signal,
       thresholdMs: resolveKeepaliveThreshold(model),
       keepaliveFrame: ANTHROPIC_PING_FRAME,
     });
   }
-  return await handleChat(request, null, preParsedBody);
+  // `stream: true` without an event-stream Accept (the SDKs send application/json): the
+  // keep-alive stream opens only after a long silence (keepaliveThreshold.ts), so a failure
+  // in the usual time keeps its HTTP status and a proxy still never sees a silent connection.
+  const streamFlagThreshold = bodyRequestsStream(body)
+    ? resolveStreamFlagKeepaliveThreshold(body?.model)
+    : null;
+  if (streamFlagThreshold !== null) {
+    return await withEarlyStreamKeepalive(handleChat(request, null, body), {
+      signal: request.signal,
+      thresholdMs: streamFlagThreshold,
+      keepaliveFrame: ANTHROPIC_PING_FRAME,
+    });
+  }
+  return await handleChat(request, null, body);
 }
 
 const guardedPost = withInjectionGuard(postHandler);

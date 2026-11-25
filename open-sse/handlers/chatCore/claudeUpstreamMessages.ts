@@ -55,7 +55,7 @@ export function extractSystemMessagesToBody(payload: Record<string, unknown>) {
 
 export function normalizeClaudeUpstreamMessages(
   payload: Record<string, unknown>,
-  options?: { preserveToolResultBlocks?: boolean },
+  options?: { preserveToolResultBlocks?: boolean; keepMidConversationSystem?: boolean },
   log?: LoggerLike
 ) {
   const preserveToolResultBlocks = options?.preserveToolResultBlocks === true;
@@ -63,7 +63,9 @@ export function normalizeClaudeUpstreamMessages(
   let messages = payload.messages as ClaudeMessage[];
 
   // Extract system/developer role messages into top-level system parameter.
-  extractSystemRoleMessages(payload);
+  extractSystemRoleMessages(payload, {
+    keepMidConversation: options?.keepMidConversationSystem === true,
+  });
   messages = payload.messages as ClaudeMessage[];
 
   // Anthropic rejects empty text blocks in native Messages payloads.

@@ -107,6 +107,8 @@ export type HandleComboChatOptions = {
   signal?: AbortSignal | null;
   apiKeyAllowedConnections?: string[] | null;
   nesting?: ComboNestingContext | null;
+  /** x-trouteai-priority: interactive | background; anything else is normal. */
+  priority?: string | null;
 };
 
 export type HandleRoundRobinOptions = Omit<

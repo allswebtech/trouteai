@@ -32,6 +32,7 @@ import {
   isTokenBudgetActive,
   type TokenBudget,
 } from "./rateLimitManager/tokenBudget";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 interface LearnedLimitEntry {
   provider: string;
@@ -116,7 +117,7 @@ let currentRequestQueueSettings: RequestQueueSettings = DEFAULT_RESILIENCE_SETTI
 // jobs are dispatched). When the reservoir/refresh state desyncs from reality,
 // this catches it and force-resets so traffic isn't stuck forever.
 const lastDispatchAt = new Map<string, number>();
-let watchdogInterval: ReturnType<typeof setInterval> | null = null;
+let watchdogInterval: (() => void) | null = null;
 const WATCHDOG_INTERVAL_MS = 30_000;
 // Threshold has to exceed any *legitimate* gap between dispatches:
 //  - default reservoirRefreshInterval is 60s
@@ -396,8 +397,16 @@ let shutdownHandlersRegistered = false;
 
 export function startRateLimitWatchdog(): void {
   if (watchdogInterval) return;
-  watchdogInterval = setInterval(watchdogTick, WATCHDOG_INTERVAL_MS);
-  watchdogInterval.unref?.();
+  // Pauses while the server is idle and no job is queued: nothing can wedge then.
+  watchdogInterval = setIdleAwareInterval(
+    "rate-limit-watchdog",
+    watchdogTick,
+    WATCHDOG_INTERVAL_MS,
+    {
+      canPause: () =>
+        Array.from(limiters.values()).every((limiter) => limiter.counts().QUEUED === 0),
+    }
+  );
   // Register SIGTERM/SIGINT shutdown handlers once, lazily, on first watchdog start.
   // Registering here (rather than at module load) avoids interfering with test runner
   // subprocess IPC teardown — the test suite does not call startRateLimitWatchdog().
@@ -410,7 +419,7 @@ export function startRateLimitWatchdog(): void {
 
 export function stopRateLimitWatchdog(): void {
   if (!watchdogInterval) return;
-  clearInterval(watchdogInterval);
+  watchdogInterval();
   watchdogInterval = null;
 }
 

@@ -20,6 +20,17 @@ import {
 } from "./errorClassifier.ts";
 import { getRegistryEntry } from "../config/providerRegistry.ts";
 
+/**
+ * The family fallback answers a request with a different model than the one asked for, so it
+ * runs only when the user turned it on (setting `modelFamilyFallback: true`). Off, or never
+ * stored, the client gets the provider's real error and can decide itself.
+ */
+export function isModelFamilyFallbackEnabled(
+  settings: Record<string, unknown> | null | undefined
+): boolean {
+  return settings?.modelFamilyFallback === true;
+}
+
 // ── Model Family Definitions ─────────────────────────────────────────────────
 
 /**

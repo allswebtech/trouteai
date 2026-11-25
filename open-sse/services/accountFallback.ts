@@ -58,6 +58,7 @@ import { evictLockoutOverflow } from "./accountFallback/lockoutEviction.ts";
 export { MODEL_LOCKOUT_EVICTION_CAP } from "./accountFallback/lockoutEviction.ts";
 import { capScaledCooldownMs } from "./accountFallback/cooldownCap.ts";
 import { resolveApiKeyForbiddenFallback } from "./accountFallback/nonRetryableUpstream.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 export type ProviderProfile = {
   baseCooldownMs: number;
   useUpstreamRetryHints: boolean;
@@ -89,6 +90,8 @@ export type ModelLockoutEntry = {
   failureCount: number;
   lastFailureAt: number;
   resetAfterMs: number;
+  /** HTTP status of the failure that set the lock, when the caller knew it. */
+  status?: number;
 };
 export type ModelFailureState = {
   failureCount: number;
@@ -132,15 +135,17 @@ function pruneConnectionFailureDedupeEntries(): void {
   }
 }
 
-const _connectionFailureSweep = setInterval(() => {
-  const now = Date.now();
-  for (const [key, ts] of lastConnectionFailure) {
-    if (now - ts > CONNECTION_FAILURE_DEDUP_MS) lastConnectionFailure.delete(key);
-  }
-}, 60_000);
-if (typeof _connectionFailureSweep === "object" && "unref" in _connectionFailureSweep) {
-  (_connectionFailureSweep as { unref?: () => void }).unref?.();
-}
+// Pauses while the server is idle: nothing adds entries then.
+setIdleAwareInterval(
+  "connection-failure-sweep",
+  () => {
+    const now = Date.now();
+    for (const [key, ts] of lastConnectionFailure) {
+      if (now - ts > CONNECTION_FAILURE_DEDUP_MS) lastConnectionFailure.delete(key);
+    }
+  },
+  60_000
+);
 
 // Signals that indicate permanent account deactivation.
 // When a 401 body contains these strings, the account is permanently dead
@@ -487,20 +492,23 @@ function getScaledCooldown(
 }
 
 // Auto-cleanup expired lockouts every 15 seconds (lazy init for Cloudflare Workers compatibility)
-let _cleanupTimer: ReturnType<typeof setInterval> | null = null;
+let _cleanupTimer: (() => void) | null = null;
 
 function ensureCleanupTimer() {
   if (_cleanupTimer) return;
   try {
-    _cleanupTimer = setInterval(() => {
-      const now = Date.now();
-      for (const key of modelLockouts.keys()) cleanupModelLockKey(key, now);
-      for (const key of modelFailureState.keys()) cleanupModelLockKey(key, now);
-      evictModelLockoutOverflow();
-    }, 15_000);
-    if (typeof _cleanupTimer === "object" && "unref" in _cleanupTimer) {
-      (_cleanupTimer as { unref?: () => void }).unref?.(); // Don't prevent process exit (Node.js only)
-    }
+    // Pauses while the server is idle: lockouts are only added by requests, and a read checks
+    // the expiry itself.
+    _cleanupTimer = setIdleAwareInterval(
+      "model-lockout-sweep",
+      () => {
+        const now = Date.now();
+        for (const key of modelLockouts.keys()) cleanupModelLockKey(key, now);
+        for (const key of modelFailureState.keys()) cleanupModelLockKey(key, now);
+        evictModelLockoutOverflow();
+      },
+      15_000
+    );
   } catch {
     // Cloudflare Workers may not support setInterval outside handlers — skip cleanup timer
   }
@@ -556,6 +564,7 @@ export function lockModel(
     failureCount: metadata.failureCount ?? existing?.failureCount ?? 1,
     lastFailureAt: metadata.lastFailureAt ?? now,
     resetAfterMs: metadata.resetAfterMs ?? existing?.resetAfterMs ?? 0,
+    ...(typeof metadata.status === "number" ? { status: metadata.status } : {}),
   });
 }
 
@@ -660,6 +669,7 @@ export function recordModelLockoutFailure(
     failureCount,
     lastFailureAt: now,
     resetAfterMs,
+    status,
   });
 
   return {
@@ -750,6 +760,23 @@ export function shouldMarkAccountExhaustedFrom429(
     shouldPreserveQuotaSignals(provider) &&
     !hasPerModelQuota(provider, model, connectionPassthroughModels)
   );
+}
+
+const RATE_LIMIT_LOCKOUT_REASONS = new Set(["rate_limit", "rate_limit_exceeded"]);
+
+/**
+ * The status a client gets while every account of a model is cooling down. A rate or usage
+ * limit stays a 429. A cooldown the gateway set itself after an outage, a refused payment or a
+ * refused model keeps the status of the failure behind it, so a short outage is never read
+ * as a usage limit by the program in front of the gateway.
+ */
+export function statusForModelCooldown(reason: string | null, errorCode: unknown): number {
+  if (!reason || RATE_LIMIT_LOCKOUT_REASONS.has(reason)) return 429;
+  const code = Number(errorCode);
+  if (reason === "quota_exhausted") return code === 402 ? 402 : 429;
+  if (code === 429) return 429;
+  if (Number.isInteger(code) && code >= 400 && code <= 599) return code;
+  return reason === "forbidden" ? 403 : 503;
 }
 
 export function classifyLockoutReason(status: number): string {
@@ -843,6 +870,7 @@ export function getModelLockoutInfo(
       remainingMs: exactEntry.until - Date.now(),
       lockedAt: new Date(exactEntry.lockedAt).toISOString(),
       failureCount: exactEntry.failureCount,
+      status: exactEntry.status ?? null,
     };
   }
 
@@ -855,6 +883,7 @@ export function getModelLockoutInfo(
       remainingMs: familyEntry.until - Date.now(),
       lockedAt: new Date(familyEntry.lockedAt).toISOString(),
       failureCount: familyEntry.failureCount,
+      status: familyEntry.status ?? null,
     };
   }
 

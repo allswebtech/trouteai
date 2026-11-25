@@ -46,7 +46,7 @@ export async function requireManagementAuth(
     return null;
   }
 
-  // CLI machine-id token allows localhost CLI access without an explicit API key.
+  // The command token (DATA_DIR/cli-token) lets the local `trouteai` command in without an API key.
   if (await isCliTokenAuthValid(request)) {
     return null;
   }

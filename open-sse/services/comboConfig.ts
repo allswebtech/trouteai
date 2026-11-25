@@ -99,7 +99,7 @@ const DEFAULT_COMBO_CONFIG = {
   retryDelayMs: 2000,
   fallbackDelayMs: 0,
   concurrencyPerModel: 3, // max simultaneous requests per model (round-robin)
-  queueTimeoutMs: 30000, // max wait time in semaphore queue (round-robin)
+  queueTimeoutMs: 120000, // wait budget in the combo's fair queue (round-robin)
   queueDepth: DEFAULT_COMBO_QUEUE_DEPTH, // pre-cascade semaphore queue depth (round-robin)
   handoffThreshold: 0.85,
   handoffModel: "",

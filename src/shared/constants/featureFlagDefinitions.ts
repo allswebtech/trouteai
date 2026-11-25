@@ -274,10 +274,11 @@ export const FEATURE_FLAG_DEFINITIONS: FeatureFlagDefinition[] = [
   {
     key: "TROUTEAI_EMERGENCY_FALLBACK",
     label: "Emergency Fallback",
-    description: "Route budget-exhausted requests to the emergency free fallback provider/model.",
+    description:
+      "Off by default. When on, a request that failed for lack of credit is sent once to a free model of another provider; the answer is marked emergency.",
     descriptionI18nKey: "featureFlagTrouteaiEmergencyFallbackDescription",
     category: "runtime",
-    defaultValue: "true",
+    defaultValue: "false",
     type: "boolean",
     requiresRestart: false,
     warningLevel: "caution",
@@ -312,6 +313,18 @@ export const FEATURE_FLAG_DEFINITIONS: FeatureFlagDefinition[] = [
     description:
       "Include display-friendly name fields in /v1/models responses. Disable for clients that expect model IDs only.",
     descriptionI18nKey: "settings.featureFlags.modelCatalogIncludeNames",
+    category: "runtime",
+    defaultValue: "true",
+    type: "boolean",
+    requiresRestart: false,
+    warningLevel: "info",
+  },
+  {
+    key: "MODELS_CATALOG_ROUTABLE_ONLY",
+    label: "Model List: Only Usable Models",
+    description:
+      "List a model or combo in /v1/models only when a request for it can be served now: a switched-on step, a switched-on model and an account that is not disabled, expired or out of credit. Turn off to list everything that is configured, as before. The dashboard always shows everything.",
+    descriptionI18nKey: "settings.featureFlags.modelsCatalogRoutableOnly",
     category: "runtime",
     defaultValue: "true",
     type: "boolean",

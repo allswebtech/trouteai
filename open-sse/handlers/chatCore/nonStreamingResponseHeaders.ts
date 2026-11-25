@@ -15,6 +15,9 @@ export function buildNonStreamingResponseHeaders(
   args: {
     provider: string | null | undefined;
     model: string | null | undefined;
+    requestedModel?: string | null | undefined;
+    fallback?: string | null | undefined;
+    fallbackAttempts?: number;
     startTime: number;
     responseUsage: unknown;
     estimatedCost: number;
@@ -34,6 +37,9 @@ export function buildNonStreamingResponseHeaders(
   deps.attachTRouteAIMetaHeaders(responseHeaders, {
     provider: args.provider,
     model: args.model,
+    requestedModel: args.requestedModel,
+    fallback: args.fallback,
+    fallbackAttempts: args.fallbackAttempts,
     cacheHit: false,
     latencyMs: deps.now() - args.startTime,
     usage: args.responseUsage,

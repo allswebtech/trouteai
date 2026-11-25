@@ -116,7 +116,6 @@ const nextConfig = {
     // Loaded at runtime via createRequire()/dynamic import (some are optional and may be
     // absent); externalizing keeps the bundler from trying to resolve or bundle them.
     "sql.js",
-    "node-machine-id",
     "keytar",
     "wreq-js",
     "zod",

@@ -523,6 +523,26 @@ export function isVisionIncompatibleTarget(
 }
 
 /**
+ * How many targets ahead of the first kept one were skipped because they cannot see the
+ * request's images. Counted as fallbacks, so the answer says it did not come from the first
+ * choice.
+ */
+export function countVisionSkippedAhead(
+  rankedTargets: ResolvedComboTarget[],
+  keptTargets: ResolvedComboTarget[],
+  body: Record<string, unknown>
+): number {
+  if (keptTargets.length === 0 || rankedTargets.length === keptTargets.length) return 0;
+  const requirements = deriveRequestCompatibilityRequirements(body);
+  if (!requirements.requiresVision) return 0;
+  const first = rankedTargets.indexOf(keptTargets[0]);
+  if (first <= 0) return 0;
+  return rankedTargets
+    .slice(0, first)
+    .filter((target) => isVisionIncompatibleTarget(target, requirements)).length;
+}
+
+/**
  * Builds the last-resort fallback candidate set: ranked targets the compat
  * pre-filter rejected, minus anything rejected for vision (see
  * isVisionIncompatibleTarget).
@@ -632,7 +652,10 @@ export function describeCapabilityFilterExhaustion(
   if (primary === "tools") {
     message = `No target in combo ${name} supports tool calling; request carried ${toolCount} tools`;
   } else if (primary === "vision") {
-    message = `No target in combo ${name} has confirmed vision support for this image request`;
+    const blind = rejected
+      .filter((entry) => entry.reasons.includes("vision"))
+      .map((entry) => entry.target.modelStr);
+    message = `No model in combo ${name} accepts images, and this request has images (${blind.join(", ")} cannot see). Remove the images or add a model that can see to the combo.`;
   } else {
     message = `No target in combo ${name} supports structured output for this request`;
   }

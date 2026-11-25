@@ -1,10 +1,7 @@
-import crypto from "node:crypto";
 import { headers } from "next/headers";
 
-import { getLegacyCliTokenSync, getMachineTokenSync } from "@/lib/machineToken";
-import { AUTHZ_HEADER_PEER_LOCALITY } from "@/server/authz/headers";
-
-const HEADER_NAME = "x-trouteai-cli-token";
+import { carriesForwardingHeader, isCliTokenDisabled, matchesCliTokenSecret } from "@/lib/cliToken";
+import { AUTHZ_HEADER_PEER_LOCALITY, CLI_TOKEN_HEADER } from "@/server/authz/headers";
 
 type RequestWithPeer = Request & {
   ip?: string;
@@ -49,43 +46,42 @@ async function isLocalCliRequest(request: RequestWithPeer): Promise<boolean> {
   const peerAddress = requestPeerAddress(request);
   if (peerAddress) return isLoopback(peerAddress);
 
-  // 2. A forwarded request came through a proxy → it is not a local CLI call.
+  // 2. A proxy or tunnel on this computer connects from loopback; its headers say the caller
+  //    is elsewhere (the socket stamp only looks at x-forwarded-for / x-real-ip).
+  if (carriesForwardingHeader(request.headers)) return false;
+
+  // 3. Behind the authz pipeline, trust ONLY the locality verdict the middleware
+  //    stamped from the real TCP peer IP and the client's own forwarding headers (it
+  //    strips any client copy of this header first). It comes before the forwarded
+  //    headers below because Next.js itself fills in x-forwarded-for with the socket
+  //    address before a route handler runs, so that header is present on every local
+  //    call too. NEVER derive locality from the Host header — it is client-controlled.
+  const locality = await readHeader(request, AUTHZ_HEADER_PEER_LOCALITY);
+  if (locality !== null) return locality === "loopback";
+
+  // 4. No verdict and a forwarded request: it came through a proxy, not a local CLI call.
   const forwardedPeer =
     firstHeaderIp(await readHeader(request, "cf-connecting-ip")) ||
     firstHeaderIp(await readHeader(request, "x-forwarded-for")) ||
     firstHeaderIp(await readHeader(request, "x-real-ip"));
   if (forwardedPeer) return false;
 
-  // 3. Behind the authz pipeline, trust ONLY the locality verdict the middleware
-  //    stamped from the real TCP peer IP. NEVER derive locality from the Host
-  //    header (new URL(request.url).hostname) — it is client-controlled, so a
-  //    remote caller with a stolen CLI token could send Host: 127.0.0.1 to pass.
-  const locality = await readHeader(request, AUTHZ_HEADER_PEER_LOCALITY);
-  if (locality !== null) return locality === "loopback";
-
-  // 4. No trusted locality signal → fail closed.
+  // 5. No trusted locality signal → fail closed.
   return false;
 }
 
 /**
- * Validates the CLI machine-id token sent by the local trouteai CLI.
- * Only accepted from loopback IPs. Disabled via TROUTEAI_DISABLE_CLI_TOKEN=true.
+ * Validates the command token sent by the local `trouteai` command: the random secret in
+ * DATA_DIR/cli-token (src/lib/cliToken.ts), the same rule as the authz pipeline. Only from this
+ * computer, never through a proxy. Disabled via TROUTEAI_DISABLE_CLI_TOKEN=true.
  */
 export async function isCliTokenAuthValid(request: Request): Promise<boolean> {
-  if (process.env.TROUTEAI_DISABLE_CLI_TOKEN === "true") return false;
+  if (isCliTokenDisabled()) return false;
 
-  const token = await readHeader(request, HEADER_NAME);
+  const token = await readHeader(request, CLI_TOKEN_HEADER);
   if (!token) return false;
 
   if (!(await isLocalCliRequest(request as RequestWithPeer))) return false;
 
-  const expectedTokens = [getMachineTokenSync(), getLegacyCliTokenSync()].filter(Boolean);
-  return expectedTokens.some((expected) => {
-    if (token.length !== expected.length) return false;
-    try {
-      return crypto.timingSafeEqual(Buffer.from(token, "utf8"), Buffer.from(expected, "utf8"));
-    } catch {
-      return false;
-    }
-  });
+  return matchesCliTokenSecret(token);
 }

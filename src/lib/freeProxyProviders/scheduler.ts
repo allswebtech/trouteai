@@ -25,6 +25,7 @@ import { getEnabledProviders } from "@/lib/freeProxyProviders";
 import { getFreeProxyStats } from "@/lib/localDb";
 import { runFreeProxySyncCycle, type FreeProxySyncCycleResult } from "./syncCycle";
 import { isBuildProcess } from "@/shared/utils/testProcess";
+import { runUnlessIdle } from "@/lib/idleState";
 
 const STARTUP_DELAY_MS = 5_000;
 const DEFAULT_INTERVAL_MS = 1_800_000;
@@ -85,7 +86,7 @@ async function runCycle(): Promise<void> {
 
 function scheduleInterval(intervalMs: number): void {
   globalThis.__freeProxyAutoSyncInterval = setInterval(() => {
-    void runCycle();
+    runUnlessIdle("free-proxy-sync", runCycle);
   }, intervalMs);
   globalThis.__freeProxyAutoSyncInterval.unref?.();
 }
@@ -119,7 +120,7 @@ export function initFreeProxyAutoSync(): void {
     const initialDelayMs = await computeInitialDelayMs(intervalMs);
     globalThis.__freeProxyAutoSyncStartupTimer = setTimeout(() => {
       globalThis.__freeProxyAutoSyncStartupTimer = undefined;
-      void runCycle();
+      runUnlessIdle("free-proxy-sync", runCycle);
       scheduleInterval(intervalMs);
     }, initialDelayMs);
     globalThis.__freeProxyAutoSyncStartupTimer.unref?.();

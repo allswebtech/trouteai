@@ -22,6 +22,7 @@
 import { registerQuotaFetcher, registerQuotaWindows, type QuotaInfo } from "./quotaPreflight.ts";
 import { registerMonitorFetcher } from "./quotaMonitor.ts";
 import { throttleQuotaFetch } from "./quotaFetchThrottle.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 const V0_CONFIG = {
   baseUrl: "https://api.v0.dev",
@@ -46,18 +47,20 @@ interface CacheEntry {
 
 const quotaCache = new Map<string, CacheEntry>();
 
-const _cacheCleanup = setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of quotaCache) {
-    if (now - entry.fetchedAt > CACHE_TTL_MS * 5) {
-      quotaCache.delete(key);
+// Pauses while the server is idle: entries are only added by requests, and the next request
+// runs the sweep again.
+setIdleAwareInterval(
+  "v0QuotaFetcher-sweep",
+  () => {
+    const now = Date.now();
+    for (const [key, entry] of quotaCache) {
+      if (now - entry.fetchedAt > CACHE_TTL_MS * 5) {
+        quotaCache.delete(key);
+      }
     }
-  }
-}, 5 * 60_000);
-
-if (typeof _cacheCleanup === "object" && "unref" in _cacheCleanup) {
-  (_cacheCleanup as { unref?: () => void }).unref?.();
-}
+  },
+  5 * 60_000
+);
 
 function toRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)

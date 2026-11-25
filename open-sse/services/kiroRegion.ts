@@ -37,6 +37,17 @@ import { getKiroMachineId, getKiroUserAgentHeaders } from "../config/kiroIdentit
 export const AWS_REGION_PATTERN = /^[a-z]{2}-[a-z]+-\d{1,2}$/;
 
 /**
+ * The stored region, trimmed and lower-cased, when it has the shape of an AWS region; else
+ * `fallback`. For code that builds a host name from it (`oidc.{region}.amazonaws.com`) and must
+ * not throw, such as the background token refresh: a changed region must never send the
+ * credentials of the request to a host outside AWS.
+ */
+export function safeAwsRegion(region: unknown, fallback = "us-east-1"): string {
+  const normalized = typeof region === "string" ? region.trim().toLowerCase() : "";
+  return AWS_REGION_PATTERN.test(normalized) ? normalized : fallback;
+}
+
+/**
  * Regions where the Amazon Q Developer *profile* is currently hosted (AWS docs: "Supported
  * Regions for the Q Developer console and Q Developer profile"). These are the guaranteed
  * discovery targets and the only regions trusted as a runtime fallback when no profileArn is

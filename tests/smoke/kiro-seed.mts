@@ -54,6 +54,25 @@ if (process.env.KIRO_SEED_ACCOUNTS === "1") {
     })),
   });
   info("seeded 2 pinned accounts and the combo kiro-accounts");
+  // Image routing (vision-e2e.mjs): a text-only model first, then one that sees; and a combo of
+  // text-only models only.
+  const step = (model: string, i: number, combo: string) => ({
+    id: `${combo}-${i}`,
+    kind: "model",
+    model,
+    providerId: "kiro",
+    weight: 0,
+  });
+  for (const [name, models] of [
+    ["vision-mixed", ["kiro/deepseek-3.2", "kiro/claude-sonnet-5"]],
+    ["vision-blind", ["kiro/deepseek-3.2", "kiro/glm-5"]],
+  ] as const) {
+    await createCombo({
+      name,
+      strategy: "priority",
+      models: models.map((m, i) => step(m, i, name)),
+    });
+  }
 }
 
 console.log(`CONN_ID=${connection.id}`);

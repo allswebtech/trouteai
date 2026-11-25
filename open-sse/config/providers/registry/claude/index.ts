@@ -28,6 +28,48 @@ export const claudeProvider: RegistryEntry = {
     tokenUrl: "https://api.anthropic.com/v1/oauth/token",
   },
   models: [
+    // The current models (Anthropic's model table): 1M context, 128K output; sampling
+    // parameters are refused (or only their defaults taken), effort steers reasoning.
+    {
+      id: "claude-fable-5-2",
+      name: "Claude Fable 5.2",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+      supportsXHighEffort: true,
+      unsupportedParams: ["temperature", "top_p", "top_k"],
+    },
+    {
+      id: "claude-fable-5-1",
+      name: "Claude Fable 5.1",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+      supportsXHighEffort: true,
+      unsupportedParams: ["temperature", "top_p", "top_k"],
+    },
+    {
+      id: "claude-opus-5-5",
+      name: "Claude Opus 5.5",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+      supportsXHighEffort: true,
+      unsupportedParams: ["temperature", "top_p", "top_k"],
+    },
+    {
+      id: "claude-sonnet-5-5",
+      name: "Claude Sonnet 5.5",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+      supportsXHighEffort: true,
+      unsupportedParams: ["temperature", "top_p", "top_k"],
+    },
+    {
+      id: "claude-haiku-5-5",
+      name: "Claude Haiku 5.5",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+      supportsXHighEffort: true,
+      unsupportedParams: ["temperature", "top_p", "top_k"],
+    },
     {
       id: "claude-fable-5",
       name: "Claude Fable 5",
@@ -90,7 +132,7 @@ export const claudeProvider: RegistryEntry = {
       name: "Claude 4.6 Sonnet",
       supportsXHighEffort: false,
       contextLength: 1000000,
-      maxOutputTokens: 64000,
+      maxOutputTokens: 128000,
     },
     {
       id: "claude-sonnet-4-5-20250929",

@@ -1,7 +1,10 @@
 // Nested combo runtime unit execution — see combo.ts for integration.
 import { errorResponse } from "../../utils/error.ts";
+import { withTRouteAIRoutingHeaders } from "@/domain/trouteaiResponseMeta";
+import { runAsAnswerFallback } from "../answerFallbackContext.ts";
 import { recordComboRequest } from "../comboMetrics.ts";
 import { resolveDelayMs } from "./comboPredicates.ts";
+import { comboFailureResponse, type ComboFailedAttempt } from "./finalStatus.ts";
 import { validateResponseQuality, releaseQualityClone } from "./validateQuality.ts";
 import type { ResponseValidationConfig } from "./responseValidation.ts";
 import type {
@@ -186,6 +189,9 @@ export async function executeRuntimeUnitCombo(args: {
   const clientRequestedStream = args.body?.stream === true;
   const startTime = Date.now();
   const effectiveStrategy = args.effectiveComboStrategy ?? args.strategy;
+  // every failed attempt, so the final answer follows the combo rule (an outage among them is
+  // a 5xx; a 429 only when every attempt was limited) and not just the last unit's status
+  const failedAttempts: ComboFailedAttempt[] = [];
   let lastResponse: Response | null = null;
   let fallbackCount = 0;
 
@@ -204,18 +210,30 @@ export async function executeRuntimeUnitCombo(args: {
         "COMBO",
         `Trying ${unit.kind} ${unitDisplayName(unit)}${retry > 0 ? ` (retry ${retry})` : ""}`
       );
-      const response = await executeRuntimeUnit({
-        body: args.body,
-        unit,
-        allCombos: args.allCombos,
-        handleSingleModel: args.handleSingleModel,
-        isModelAvailable: args.isModelAvailable,
-        runCombo: args.runCombo,
-        baseOptions: args.baseOptions,
-        nesting: args.nesting,
-        failoverBeforeRetry: args.config.failoverBeforeRetry,
-        effectiveComboStrategy: effectiveStrategy,
-      });
+      // a later unit is a fallback, marked like a later target of the shared loop
+      const laterUnit =
+        fallbackCount > 0 ? { fallback: "combo-step", attempts: fallbackCount } : null;
+      const unitResponse = await runAsAnswerFallback(laterUnit, () =>
+        executeRuntimeUnit({
+          body: args.body,
+          unit,
+          allCombos: args.allCombos,
+          handleSingleModel: args.handleSingleModel,
+          isModelAvailable: args.isModelAvailable,
+          runCombo: args.runCombo,
+          baseOptions: args.baseOptions,
+          nesting: args.nesting,
+          failoverBeforeRetry: args.config.failoverBeforeRetry,
+          effectiveComboStrategy: effectiveStrategy,
+        })
+      );
+      const response =
+        laterUnit && unitResponse.ok
+          ? withTRouteAIRoutingHeaders(unitResponse, {
+              fallback: laterUnit.fallback,
+              fallbackAttempts: laterUnit.attempts,
+            })
+          : unitResponse;
       lastResponse = response;
       if (response.ok) {
         if (unit.kind === "combo-ref") {
@@ -251,6 +269,10 @@ export async function executeRuntimeUnitCombo(args: {
           });
           return { response, unit };
         }
+        // an answer that fails the quality check counts as a bad gateway, as in the shared loop
+        failedAttempts.push({ status: 502 });
+      } else {
+        failedAttempts.push({ status: response.status, response });
       }
       if (![408, 429, 500, 502, 503, 504].includes(response.status)) break;
     }
@@ -262,8 +284,13 @@ export async function executeRuntimeUnitCombo(args: {
     fallbackCount,
     strategy: effectiveStrategy,
   });
+  // A last answer that was a 200 and failed only the quality check is returned as before.
+  if (lastResponse?.ok) return { response: lastResponse, unit: null };
   return {
-    response: lastResponse || errorResponse(503, "All nested combo units unavailable"),
+    response:
+      failedAttempts.length > 0
+        ? comboFailureResponse(failedAttempts, "All nested combo units unavailable")
+        : errorResponse(503, "All nested combo units unavailable"),
     unit: null,
   };
 }

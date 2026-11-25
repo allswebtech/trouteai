@@ -48,6 +48,7 @@
 import { registerQuotaFetcher, registerQuotaWindows, type QuotaInfo } from "./quotaPreflight.ts";
 import { registerMonitorFetcher } from "./quotaMonitor.ts";
 import { throttleQuotaFetch } from "./quotaFetchThrottle.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 // OpenCode quota endpoint — same key works across opencode, opencode-go, opencode-zen
 // Default points at /zen/go/v1/quota which returns 404 today (no public quota API yet,
@@ -104,18 +105,20 @@ export function _hasWarned404(url: string): boolean {
 }
 
 // Auto-cleanup stale entries every 5 minutes
-const _cacheCleanup = setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of quotaCache) {
-    if (now - entry.fetchedAt > CACHE_TTL_MS * 5) {
-      quotaCache.delete(key);
+// Pauses while the server is idle: entries are only added by requests, and the next request
+// runs the sweep again.
+setIdleAwareInterval(
+  "opencodeQuotaFetcher-sweep",
+  () => {
+    const now = Date.now();
+    for (const [key, entry] of quotaCache) {
+      if (now - entry.fetchedAt > CACHE_TTL_MS * 5) {
+        quotaCache.delete(key);
+      }
     }
-  }
-}, 5 * 60_000);
-
-if (typeof _cacheCleanup === "object" && "unref" in _cacheCleanup) {
-  (_cacheCleanup as { unref?: () => void }).unref?.();
-}
+  },
+  5 * 60_000
+);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

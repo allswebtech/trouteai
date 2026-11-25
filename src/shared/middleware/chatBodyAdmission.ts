@@ -22,7 +22,7 @@ export const CHAT_LARGE_BODY_BYTES = parsePositiveInt(
 
 export const CHAT_HARD_MAX_BODY_BYTES = parsePositiveInt(
   process.env.TROUTEAI_CHAT_HARD_MAX_BODY_BYTES,
-  50 * 1024 * 1024
+  64 * 1024 * 1024
 );
 
 const CHAT_MAX_HEAVY_IN_FLIGHT = parsePositiveInt(process.env.TROUTEAI_CHAT_MAX_HEAVY_IN_FLIGHT, 1);
@@ -31,10 +31,7 @@ export const CHAT_HEAVY_MESSAGE_COUNT = parsePositiveInt(
   process.env.TROUTEAI_CHAT_HEAVY_MESSAGE_COUNT,
   200
 );
-export const CHAT_HEAVY_TOOL_COUNT = parsePositiveInt(
-  process.env.TROUTEAI_CHAT_HEAVY_TOOL_COUNT,
-  64
-);
+export const CHAT_HEAVY_TOOL_COUNT = parsePositiveInt(process.env.TROUTEAI_CHAT_HEAVY_TOOL_COUNT, 64);
 export const CHAT_HEAVY_ESTIMATED_TOKENS = parsePositiveInt(
   process.env.TROUTEAI_CHAT_HEAVY_ESTIMATED_TOKENS,
   32_000

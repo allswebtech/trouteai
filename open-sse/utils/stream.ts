@@ -65,6 +65,7 @@ import {
   hasUnsupportedReasoningSignal,
 } from "./reasoningFields.ts";
 import { applyThinkTag, flushThink, initThinkState } from "./thinkTagParser.ts";
+import { flushTruncatedClaudeStream } from "../translator/response/openai-to-claude.ts";
 
 /**
  * Race a response body read against a timeout.
@@ -156,6 +157,19 @@ type StreamOptions = {
    * codex-compatible `namespace` + `name` fields.
    */
   requestToolIdentityMap?: Map<string, { namespace: string; name: string }> | null;
+  /**
+   * Who answered and why, read when the stream ends (a fallback can be decided after the stream
+   * was created). Goes into the end-of-stream metadata comment, which is the only place a stream
+   * whose 200 was already sent by the early keep-alive can carry these facts.
+   */
+  routingFacts?: StreamRoutingFacts | null;
+};
+
+export type StreamRoutingFacts = () => {
+  requestedModel?: string | null;
+  model?: string | null;
+  fallback?: string | null;
+  fallbackAttempts?: number;
 };
 
 type TranslateState = ReturnType<typeof initState> & {
@@ -692,6 +706,7 @@ export function createSSEStream(options: StreamOptions = {}) {
     dropResponsesCommentary,
     customToolNames = new Set<string>(),
     requestToolIdentityMap = null,
+    routingFacts = null,
   } = options;
   const signatureNamespace = connectionId;
   // Drop internal commentary-phase Responses output before forwarding.
@@ -1033,9 +1048,13 @@ export function createSSEStream(options: StreamOptions = {}) {
     finalUsage: UsageTokenRecord | Record<string, unknown> | null | undefined
   ) => {
     const costUsd = finalUsage ? await calculateCost(provider, model, finalUsage) : 0;
+    const facts = routingFacts?.() ?? null;
     const comment = buildTRouteAISseMetadataComment({
       provider,
-      model,
+      model: facts?.model || model,
+      requestedModel: facts?.requestedModel ?? null,
+      fallback: facts?.fallback ?? null,
+      fallbackAttempts: facts?.fallbackAttempts ?? 0,
       cacheHit: false,
       latencyMs: Date.now() - streamStartedAt,
       usage: finalUsage,
@@ -2562,6 +2581,14 @@ export function createSSEStream(options: StreamOptions = {}) {
             }
           }
 
+          // An Anthropic client's answer that stopped without a finish reason was cut off: it
+          // ends with an in-band error below, not with a normal finish.
+          if (!state?.upstreamError && sourceFormat === FORMATS.CLAUDE) {
+            for (const item of flushTruncatedClaudeStream(state) || []) {
+              emitTranslatedClientItem(controller, item);
+            }
+          }
+
           if (state?.upstreamError) {
             const err = state.upstreamError;
             // A context overflow inside the stream: end it with an in-band error in the
@@ -2835,10 +2862,12 @@ export function createSSETransformStreamWithLogger(
   copilotCompatibleReasoning = false,
   suppressThinkClose = false,
   customToolNames: ReadonlySet<string> = new Set(),
-  requestToolIdentityMap: Map<string, { namespace: string; name: string }> | null = null
+  requestToolIdentityMap: Map<string, { namespace: string; name: string }> | null = null,
+  routingFacts: StreamRoutingFacts | null = null
 ) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
+    routingFacts,
     targetFormat,
     sourceFormat,
     provider,
@@ -2868,10 +2897,12 @@ export function createPassthroughStreamWithLogger(
   apiKeyInfo: unknown = null,
   onFailure: ((payload: StreamFailurePayload) => void | Promise<void>) | null = null,
   clientResponseFormat: string | null = null,
-  requestToolIdentityMap: Map<string, { namespace: string; name: string }> | null = null
+  requestToolIdentityMap: Map<string, { namespace: string; name: string }> | null = null,
+  routingFacts: StreamRoutingFacts | null = null
 ) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
+    routingFacts,
     provider,
     reqLogger,
     toolNameMap,

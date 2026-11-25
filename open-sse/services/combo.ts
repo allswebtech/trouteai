@@ -21,11 +21,14 @@ import {
   selectLockoutCooldownMs,
 } from "./accountFallback.ts";
 import {
+  buildErrorBody,
   errorResponse,
   unavailableResponse,
   errorResponseWithComboDiagnostics,
 } from "../utils/error.ts";
 import type { ComboDiagnostics } from "../utils/error.ts";
+import { withTRouteAIRoutingHeaders } from "@/domain/trouteaiResponseMeta";
+import { runAsAnswerFallback } from "./answerFallbackContext.ts";
 import {
   COMBO_FAILURE_THRESHOLD,
   clearComboFailureTracking,
@@ -79,6 +82,21 @@ import {
 import { selectQuotaShareTarget } from "./combo/quotaShareStrategy.ts";
 import { makeConnectionConcurrencyResolver, lookupPositiveCap } from "./combo/concurrencyCaps.ts";
 import { acquireQuotaShareConcurrencySlot } from "./combo/quotaShareConcurrency.ts";
+import {
+  busyResponse,
+  estimateRetryAfterSeconds,
+  parseRequestPriority,
+  recordSlotHold,
+  type SlotGrant,
+  waitForSlot,
+  waitingCount,
+} from "./combo/fairQueue.ts";
+import {
+  isFirstTurn,
+  rankStartCandidates,
+  readLimitedConnectionIds,
+  recordSlotUse,
+} from "./combo/leastBusy.ts";
 import { orderTargetsByEvalScores } from "./evalRouting.ts";
 import {
   applyPromptCacheAffinity,
@@ -140,6 +158,7 @@ import {
 import { dispatchChaosFromCombo, type ChaosTuning } from "./autoCombo/chaosEngine.ts";
 import {
   TRANSIENT_FOR_SEMAPHORE,
+  isHighLoadAnswer,
   MAX_FALLBACK_WAIT_MS,
   MAX_GLOBAL_ATTEMPTS,
   isAllAccountsRateLimitedResponse,
@@ -180,6 +199,11 @@ import {
   tryRuntimeUnitDispatch,
 } from "./combo/dispatchPrelude.ts";
 import { isRetryAfterEligibleStatus } from "./combo/unavailableRetryGate.ts";
+import {
+  comboFinalStatus,
+  isUsageLimitAnswer,
+  retryAfterFromRateLimitAnswer,
+} from "./combo/finalStatus.ts";
 import { isRecord } from "./combo/comboData.ts";
 import {
   expandProviderWildcardsInCombo,
@@ -189,6 +213,7 @@ import { resolveShadowTargets, scheduleShadowRouting } from "./combo/shadowRouti
 import { attemptCompatRejectedFallback } from "./combo/comboCompatFallback.ts";
 import {
   computeCompatRejectedTargets,
+  countVisionSkippedAhead,
   describeCapabilityFilterExhaustion,
   filterTargetsByRequestCompatibility,
   resolveComboRuntimeUnits,
@@ -280,6 +305,13 @@ const DEFAULT_MODEL_P95_MS: Record<string, number> = {
 };
 const MIN_HISTORY_SAMPLES = 10;
 const OUTPUT_TOKEN_RATIO = 0.4;
+// The longest a turn of a known conversation waits for its own full account before it goes on
+// to the other accounts (a quarter of the wait budget when that is shorter).
+const PINNED_WAIT_MAX_MS = 5_000;
+// The longest a failed answer pauses one account's slots in a round-robin combo. The account's
+// own limit and reset time are kept on the account; a longer pause here outlived that reset and
+// kept a usable account out of the rotation.
+const SLOT_PAUSE_MAX_MS = 5_000;
 
 /**
  * A 429 that names a retry time later than the same-target retry delay (a used-up usage
@@ -586,6 +618,7 @@ export async function handleComboChat({
   signal,
   apiKeyAllowedConnections = null,
   nesting = null,
+  priority = null,
 }: HandleComboChatOptions): Promise<Response> {
   const comboCtx = createComboContext({ body, combo, settings, relayOptions, log });
   const {
@@ -700,6 +733,7 @@ export async function handleComboChat({
       settings,
       allCombos,
       signal,
+      priority,
     });
   }
 
@@ -726,7 +760,8 @@ export async function handleComboChat({
     buildAutoCandidates,
   });
   if ("earlyResponse" in targetResolution) return targetResolution.earlyResponse;
-  const { stickyWeightedLimit, getWeightedStepKeyForTarget, preScreenMap } = targetResolution;
+  const { stickyWeightedLimit, getWeightedStepKeyForTarget, preScreenMap, visionSkipped } =
+    targetResolution;
   const _sticky = targetResolution.sticky;
   let orderedTargets = targetResolution.orderedTargets;
 
@@ -839,6 +874,10 @@ export async function handleComboChat({
     let lastError: string | null = null;
     let earliestRetryAfter: ComboRetryAfter | null = null;
     let lastStatus: number | null = null;
+    // Every failed step's status, and whether every 429 among them was a used-up usage window:
+    // the final answer is a 429 only when every step was refused for a limit.
+    const stepStatuses: number[] = [];
+    let limitsAreUsageLimits = true;
 
     for (let setTry = 0; setTry <= maxSetRetries; setTry++) {
       // Per-set-iteration set of providers whose quota is fully exhausted.
@@ -866,7 +905,8 @@ export async function handleComboChat({
       }
 
       const startTime = Date.now();
-      let fallbackCount = 0;
+      // Targets skipped ahead of the first one because they cannot see count as fallbacks.
+      let fallbackCount = visionSkipped;
       let recordedAttempts = 0;
       comboErrors = [];
 
@@ -1185,11 +1225,16 @@ export async function handleComboChat({
               }
             }
           }
-          const result = await handleSingleModelWithTimeout(attemptBody, modelStr, {
-            ...targetForAttempt,
-            effectiveComboStrategy: strategy,
-            failoverBeforeRetry: config.failoverBeforeRetry,
-          });
+          // a later target is a fallback: its log row says so too, not only the headers
+          const result = await runAsAnswerFallback(
+            i > 0 ? { fallback: "combo-step", attempts: i } : null,
+            () =>
+              handleSingleModelWithTimeout(attemptBody, modelStr, {
+                ...targetForAttempt,
+                effectiveComboStrategy: strategy,
+                failoverBeforeRetry: config.failoverBeforeRetry,
+              })
+          );
 
           // Success — validate response quality before returning
           if (result.ok) {
@@ -1237,6 +1282,7 @@ export async function handleComboChat({
               // misleading ALL_ACCOUNTS_INACTIVE when the real issue is quality.
               lastError = `Upstream response failed quality validation: ${quality.reason}`;
               lastStatus = 502;
+              stepStatuses.push(502);
               if (i > 0) fallbackCount++;
               if (provider && rawModel) {
                 const mlSettings = resolveModelLockoutSettings(settings);
@@ -1460,7 +1506,18 @@ export async function handleComboChat({
               })();
             }
 
-            return { ok: true, response: result };
+            // A later target answered: the client is told (targets before it were skipped
+            // or failed), never served another model silently.
+            return {
+              ok: true,
+              response:
+                i > 0
+                  ? withTRouteAIRoutingHeaders(result, {
+                      fallback: "combo-step",
+                      fallbackAttempts: i,
+                    })
+                  : result,
+            };
           }
 
           // Extract error info from response
@@ -1506,6 +1563,11 @@ export async function handleComboChat({
             }
           } catch {
             /* Clone failed */
+          }
+
+          if (result.status === 429) {
+            retryAfter = retryAfter || retryAfterFromRateLimitAnswer(result);
+            if (!isUsageLimitAnswer(result)) limitsAreUsageLimits = false;
           }
 
           // Track earliest retryAfter
@@ -1709,6 +1771,7 @@ export async function handleComboChat({
               error: errorText || String(result.status),
             });
             lastStatus = result.status;
+            stepStatuses.push(result.status);
             if (i > 0) fallbackCount++;
             log.warn("COMBO", `Model ${modelStr} failed with body-specific error, stopping combo`);
             // Surface the 400 via the {ok,response} contract so the OUTER
@@ -1770,6 +1833,7 @@ export async function handleComboChat({
               // was just observed. Recording it here mirrors the "done retrying" path.
               lastError = errorText || String(result.status);
               lastStatus = result.status;
+              stepStatuses.push(result.status);
               if (i > 0) fallbackCount++;
               return null;
             }
@@ -1810,6 +1874,7 @@ export async function handleComboChat({
               // first-failure lockout path, so lastStatus needs recording here too.
               lastError = errorText || String(result.status);
               lastStatus = result.status;
+              stepStatuses.push(result.status);
               if (i > 0) fallbackCount++;
               return null;
             }
@@ -1832,6 +1897,7 @@ export async function handleComboChat({
             error: errorText || String(result.status),
           });
           lastStatus = result.status;
+          stepStatuses.push(result.status);
           if (i > 0) fallbackCount++;
           // Wire combo failures into the resilience dashboard (model-level lockout)
           // alongside the provider-level cooldown below — they govern different scopes.
@@ -2046,7 +2112,7 @@ export async function handleComboChat({
         );
       }
 
-      const status = lastStatus;
+      const status = comboFinalStatus(stepStatuses, lastStatus);
       // Build aggregated error message with per-model failure details for diagnostics.
       const comboErrorSummary =
         comboErrors.length > 0
@@ -2119,7 +2185,9 @@ export async function handleComboChat({
       if (earliestRetryAfter && isRetryAfterEligibleStatus(status)) {
         const retryHuman = formatRetryAfter(toRetryAfterDisplayValue(earliestRetryAfter));
         log.warn("COMBO", `All models failed | ${msg} (${retryHuman})`);
-        return unavailableResponse(status, msg, earliestRetryAfter, retryHuman);
+        return unavailableResponse(status, msg, earliestRetryAfter, retryHuman, {
+          usageLimit: limitsAreUsageLimits,
+        });
       }
 
       // Silent-stop fix: bump the failure counter (pin clears on 3rd consecutive) and emit
@@ -2203,6 +2271,7 @@ async function handleRoundRobinCombo({
   settings,
   allCombos,
   signal,
+  priority = null,
 }: HandleRoundRobinOptions): Promise<Response> {
   const config = settings
     ? resolveComboConfig(combo, settings)
@@ -2212,10 +2281,8 @@ async function handleRoundRobinCombo({
   // so a low-concurrency subscription account is not flooded; falls back to the
   // combo-level concurrency when the connection has no positive cap.
   const resolveTargetConcurrency = makeConnectionConcurrencyResolver(concurrency);
-  const queueTimeout = config.queueTimeoutMs ?? 30000;
-  // Pre-cascade queue depth — lower values fail over to the next combo member
-  // sooner under concurrency saturation (0 = never queue). Default 20 (backward-compat).
-  const queueDepth = resolveComboQueueDepth(config);
+  // The wait budget: how long a request may wait in the combo's fair queue in all.
+  const queueTimeout = config.queueTimeoutMs ?? 120000;
   const maxRetries = config.maxRetries ?? 1;
   const retryDelayMs = resolveDelayMs(config.retryDelayMs, 2000);
   const fallbackDelayMs = resolveDelayMs(config.fallbackDelayMs, 0);
@@ -2432,13 +2499,49 @@ async function handleRoundRobinCombo({
     if (stickyIdx >= 0) rrStartIndex = stickyIdx;
   }
 
+  // A new conversation (a first turn, no account pinned to it, no cache key of the client's own)
+  // starts on the least busy usable account, and among equally busy ones on the one used least
+  // recently. Its later turns stay pinned to that account by the session stickiness above.
+  let newConversationOrder: number[] | null = null;
+  if (
+    modelCount > 1 &&
+    !_rrSessionSticky.stuck &&
+    // Without a conversation key no pin is recorded, and the next turn would land elsewhere.
+    !!_rrSessionSticky.messageHash &&
+    rrAffinity.source !== "explicit" &&
+    isFirstTurn(normalizeStickinessMessages(body as { messages?: unknown; input?: unknown }))
+  ) {
+    const limited = await readLimitedConnectionIds(filteredTargets.map((t) => t.provider));
+    newConversationOrder = rankStartCandidates(
+      filteredTargets.map((t) => {
+        const key = `combo:${combo.name}:${t.executionKey}`;
+        const usable =
+          !semaphore.isPaused(key) &&
+          !(t.connectionId && limited.has(t.connectionId)) &&
+          !(
+            resilienceSettings.providerCooldown.enabled &&
+            Boolean(t.provider && t.provider !== "unknown") &&
+            isProviderInCooldown(
+              t.provider,
+              t.connectionId as string | undefined,
+              resilienceSettings
+            )
+          );
+        return { key, usable };
+      })
+    );
+  }
+
   const clientRequestedStream = body?.stream === true;
   const startTime = Date.now();
   let lastError: string | null = null;
   let lastStatus: number | null = null;
   let earliestRetryAfter: ComboRetryAfter | null = null;
+  const stepStatuses: number[] = [];
+  let limitsAreUsageLimits = true;
   let globalAttempts = 0;
-  let fallbackCount = 0;
+  // Targets skipped ahead of the first one because they cannot see count as fallbacks.
+  let fallbackCount = countVisionSkippedAhead(evalRankedTargets, filteredTargets, body);
   let recordedAttempts = 0;
 
   // Per-request in-memory set of providers whose quota is fully exhausted.
@@ -2448,170 +2551,385 @@ async function handleRoundRobinCombo({
   const exhaustedConnections = new Set<string>();
   const transientRateLimitedProviders = new Set<string>();
 
-  // Try each model starting from the round-robin target
-  for (let offset = 0; offset < modelCount; offset++) {
-    const modelIndex = (rrStartIndex + offset) % modelCount;
-    const target = filteredTargets[modelIndex];
-    const modelStr = target.modelStr;
-    const provider = target.provider;
-    const profile = await getRuntimeProviderProfile(provider);
-    const semaphoreKey = `combo:${combo.name}:${target.executionKey}`;
-    const allowRateLimitedConnection =
-      Boolean(provider && provider !== "unknown") && transientRateLimitedProviders.has(provider);
-    const targetForAttempt = allowRateLimitedConnection
-      ? { ...target, allowRateLimitedConnection: true }
-      : target;
-
-    // Pre-check availability
-    if (isModelAvailable) {
-      const available = await isModelAvailable(modelStr, targetForAttempt);
-      if (!available) {
-        log.debug?.(
-          "COMBO-RR",
-          `Skipping ${modelStr} — no credentials available or model excluded`
-        );
-        if (offset > 0) fallbackCount++;
-        continue;
+  // Try each model starting from the round-robin target. A target whose slots are all taken
+  // is not waited on alone: it is set aside, the others are tried, and when nothing else is
+  // left the request waits in the combo's one fair queue for the first slot that frees on
+  // any of the busy targets, up to the wait budget.
+  const visitOrder: number[] =
+    newConversationOrder ??
+    Array.from({ length: modelCount }, (_, i) => (rrStartIndex + i) % modelCount);
+  const busyTargets = new Map<number, { key: string; max: number }>();
+  let grantedSlot: SlotGrant | null = null;
+  const waitDeadlineMs = startTime + queueTimeout;
+  let offset = -1;
+  try {
+    while (true) {
+      // A slot handed to a target that a pre-check then skipped goes back at once.
+      if (grantedSlot) {
+        grantedSlot.release();
+        grantedSlot = null;
       }
-    }
-
-    if (
-      resilienceSettings.providerCooldown.enabled &&
-      Boolean(provider && provider !== "unknown") &&
-      isProviderInCooldown(provider, target.connectionId as string | undefined, resilienceSettings)
-    ) {
-      log.info("COMBO-RR", `Skipping ${modelStr} — provider ${provider} in global cooldown`);
-      if (offset > 0) fallbackCount++;
-      continue;
-    }
-
-    // Skip targets already known-exhausted this request (shared predicate).
-    const exhaustedSkip = getExhaustedTargetSkipReason(
-      target,
-      exhaustedProviders,
-      exhaustedConnections
-    );
-    if (exhaustedSkip) {
-      log.info("COMBO-RR", exhaustedSkip);
-      if (offset > 0) fallbackCount++;
-      continue;
-    }
-
-    // Acquire semaphore slot (may wait in queue). Honor the connection's own
-    // maxConcurrent cap when set; else fall back to the combo-level concurrency.
-    const targetConcurrency = await resolveTargetConcurrency(target.connectionId);
-    let release: () => void;
-    try {
-      release = await semaphore.acquire(semaphoreKey, {
-        maxConcurrency: targetConcurrency,
-        timeoutMs: queueTimeout,
-        maxQueueSize: queueDepth,
-      });
-    } catch (err) {
-      const errCode = isRecord(err) && typeof err.code === "string" ? err.code : null;
-      if (errCode === "SEMAPHORE_TIMEOUT" || errCode === "SEMAPHORE_QUEUE_FULL") {
-        log.warn(
-          "COMBO-RR",
-          `Semaphore ${errCode === "SEMAPHORE_QUEUE_FULL" ? "queue full" : "timeout"} for ${modelStr}, trying next model`
-        );
-        if (offset > 0) fallbackCount++;
-        continue;
-      }
-      throw err;
-    }
-
-    // Retry loop within this model
-    try {
-      for (let retry = 0; retry <= maxRetries; retry++) {
-        globalAttempts++;
-        if (globalAttempts > MAX_GLOBAL_ATTEMPTS) {
+      if (visitOrder.length === 0) {
+        if (busyTargets.size === 0) break;
+        const keys = [...busyTargets.values()];
+        const waited = await waitForSlot(combo.name, keys, {
+          priority: parseRequestPriority(priority),
+          deadlineMs: waitDeadlineMs,
+          signal,
+        });
+        if (!waited.granted) {
+          if (waited.reason === "aborted") {
+            log.info("COMBO-RR", "Client disconnected while waiting for a slot — not sent");
+            return errorResponse(499, "Client disconnected");
+          }
+          const totalSlots = keys.reduce((sum, k) => sum + k.max, 0);
+          const waiting = waitingCount(combo.name) + 1;
+          const retryAfterSec = estimateRetryAfterSeconds(combo.name, waited.position, totalSlots);
           log.warn(
             "COMBO-RR",
-            `Maximum combo attempts (${MAX_GLOBAL_ATTEMPTS}) exceeded. Terminating loop to prevent runaway requests.`
+            `Gateway busy: no slot of combo ${combo.name} freed within ${queueTimeout}ms`
           );
-          return errorResponse(503, "Maximum combo retry limit reached");
+          if (recordedAttempts === 0) {
+            recordComboRequest(combo.name, null, {
+              success: false,
+              latencyMs: Date.now() - startTime,
+              fallbackCount,
+              strategy: "round-robin",
+            });
+          }
+          return busyResponse(combo.name, totalSlots, waiting, retryAfterSec);
         }
-        if (retry > 0) {
-          log.info(
+        const grantedKey = waited.granted.key;
+        const grantedIndex = [...busyTargets.entries()].find(([, k]) => k.key === grantedKey)?.[0];
+        if (grantedIndex === undefined) {
+          waited.granted.release();
+          continue;
+        }
+        busyTargets.delete(grantedIndex);
+        grantedSlot = waited.granted;
+        visitOrder.push(grantedIndex);
+      }
+      const modelIndex = visitOrder.shift() as number;
+      offset++;
+      const target = filteredTargets[modelIndex];
+      const modelStr = target.modelStr;
+      const provider = target.provider;
+      const profile = await getRuntimeProviderProfile(provider);
+      const semaphoreKey = `combo:${combo.name}:${target.executionKey}`;
+      const allowRateLimitedConnection =
+        Boolean(provider && provider !== "unknown") && transientRateLimitedProviders.has(provider);
+      const targetForAttempt = allowRateLimitedConnection
+        ? { ...target, allowRateLimitedConnection: true }
+        : target;
+
+      // Pre-check availability
+      if (isModelAvailable) {
+        const available = await isModelAvailable(modelStr, targetForAttempt);
+        if (!available) {
+          log.debug?.(
             "COMBO-RR",
-            `Retrying ${modelStr} in ${retryDelayMs}ms (attempt ${retry + 1}/${maxRetries + 1})`
+            `Skipping ${modelStr} — no credentials available or model excluded`
           );
-          await new Promise((r) => setTimeout(r, retryDelayMs));
+          if (offset > 0) fallbackCount++;
+          continue;
         }
+      }
 
-        log.info(
-          "COMBO-RR",
-          `[RR #${counter}] → ${modelStr}${offset > 0 ? ` (fallback +${offset})` : ""}${retry > 0 ? ` (retry ${retry})` : ""}`
-        );
+      if (
+        resilienceSettings.providerCooldown.enabled &&
+        Boolean(provider && provider !== "unknown") &&
+        isProviderInCooldown(
+          provider,
+          target.connectionId as string | undefined,
+          resilienceSettings
+        )
+      ) {
+        log.info("COMBO-RR", `Skipping ${modelStr} — provider ${provider} in global cooldown`);
+        if (offset > 0) fallbackCount++;
+        continue;
+      }
 
-        // Reasoning models can spend the whole output budget on
-        // reasoning. Apply any safe buffer to a per-attempt copy so round-robin
-        // retries never compound across models.
-        // UNCONDITIONAL — copying only when the buffer changed max_tokens left every
-        // other attempt sharing the caller's object, leaking chatCore's `body.model` forward.
-        let attemptBody = { ...(body as Record<string, unknown>) } as typeof body;
-        {
-          const bodyRecord = attemptBody as Record<string, unknown>;
-          const currentMaxTokens = toPositiveInteger(bodyRecord.max_tokens);
-          const bufferedMaxTokens = resolveReasoningBufferedMaxTokens(
-            modelStr,
-            bodyRecord.max_tokens,
-            { enabled: reasoningTokenBufferEnabled }
+      // Skip targets already known-exhausted this request (shared predicate).
+      const exhaustedSkip = getExhaustedTargetSkipReason(
+        target,
+        exhaustedProviders,
+        exhaustedConnections
+      );
+      if (exhaustedSkip) {
+        log.info("COMBO-RR", exhaustedSkip);
+        if (offset > 0) fallbackCount++;
+        continue;
+      }
+
+      // Acquire semaphore slot (may wait in queue). Honor the connection's own
+      // maxConcurrent cap when set; else fall back to the combo-level concurrency.
+      const targetConcurrency = await resolveTargetConcurrency(target.connectionId);
+      let release: () => void;
+      if (grantedSlot && grantedSlot.key === semaphoreKey) {
+        release = grantedSlot.release;
+        grantedSlot = null;
+      } else {
+        let taken = semaphore.tryAcquire(semaphoreKey, targetConcurrency);
+        // A turn of a known conversation first waits a short while for its own account, so
+        // the prompt cache that account holds is used. When that account stays full, the
+        // turn goes on to the other accounts and the combo's fair queue like any request,
+        // instead of waiting out the whole budget while other accounts are free.
+        if (!taken && _rrSessionSticky.stuck && offset === 0 && modelIndex === rrStartIndex) {
+          const pinnedDeadlineMs = Math.min(
+            waitDeadlineMs,
+            Date.now() + Math.min(PINNED_WAIT_MAX_MS, queueTimeout / 4)
           );
-          if (
-            currentMaxTokens !== null &&
-            bufferedMaxTokens !== null &&
-            bufferedMaxTokens !== currentMaxTokens
-          ) {
-            // Safe to write in place: bodyRecord is the per-attempt copy above, not the caller's.
-            bodyRecord.max_tokens = bufferedMaxTokens;
-            log.debug?.(
-              "COMBO-RR",
-              `Reasoning model ${modelStr}: adjusted max_tokens ${currentMaxTokens} -> ${bufferedMaxTokens}`
-            );
+          const waitedPinned = await waitForSlot(
+            combo.name,
+            [{ key: semaphoreKey, max: targetConcurrency }],
+            { priority: parseRequestPriority(priority), deadlineMs: pinnedDeadlineMs, signal }
+          );
+          if (waitedPinned.granted) {
+            taken = waitedPinned.granted.release;
+          } else if (waitedPinned.reason === "aborted") {
+            log.info("COMBO-RR", "Client disconnected while waiting for a slot — not sent");
+            return errorResponse(499, "Client disconnected");
           }
         }
+        if (!taken) {
+          log.debug?.("COMBO-RR", `All slots of ${modelStr} are in use; trying the others first`);
+          busyTargets.set(modelIndex, { key: semaphoreKey, max: targetConcurrency });
+          offset--;
+          continue;
+        }
+        release = taken;
+      }
+      const slotTakenAt = Date.now();
+      recordSlotUse(semaphoreKey);
 
-        const result = await handleSingleModel(attemptBody, modelStr, {
-          ...targetForAttempt,
-          effectiveComboStrategy: "round-robin",
-          failoverBeforeRetry: config.failoverBeforeRetry,
-        });
-
-        // Success — validate response quality before returning
-        if (result.ok) {
-          let rrClone: Response;
-          try {
-            rrClone = result.clone();
-          } catch {
-            rrClone = result;
-          }
-          const quality = await validateResponseQuality(
-            rrClone,
-            clientRequestedStream,
-            log,
-            config.responseValidation
-          );
-          releaseQualityClone(rrClone, result, quality);
-          if (!quality.valid) {
-            releaseRejectedQualityResponse(rrClone, result);
+      // Retry loop within this model
+      try {
+        for (let retry = 0; retry <= maxRetries; retry++) {
+          globalAttempts++;
+          if (globalAttempts > MAX_GLOBAL_ATTEMPTS) {
             log.warn(
               "COMBO-RR",
-              `${modelStr} returned 200 but failed quality check: ${quality.reason}`
+              `Maximum combo attempts (${MAX_GLOBAL_ATTEMPTS}) exceeded. Terminating loop to prevent runaway requests.`
             );
-            // Same rationale as handleComboChat's quality-fail branch —
-            // a quality-rejected 200 never marks the connection row unhealthy,
-            // so release the sticky pin here rather than on the next turn.
-            {
-              const rrSelectedConnectionId =
-                result.headers?.get("X-TRouteAI-Selected-Connection-Id") ||
-                result.headers?.get("x-trouteai-selected-connection-id") ||
-                undefined;
-              releaseStickyPinOnFailure(
-                _rrSessionSticky.messageHash,
-                rrSelectedConnectionId || target.connectionId
+            return errorResponse(503, "Maximum combo retry limit reached");
+          }
+          if (retry > 0) {
+            log.info(
+              "COMBO-RR",
+              `Retrying ${modelStr} in ${retryDelayMs}ms (attempt ${retry + 1}/${maxRetries + 1})`
+            );
+            await new Promise((r) => setTimeout(r, retryDelayMs));
+          }
+
+          log.info(
+            "COMBO-RR",
+            `[RR #${counter}] → ${modelStr}${offset > 0 ? ` (fallback +${offset})` : ""}${retry > 0 ? ` (retry ${retry})` : ""}`
+          );
+
+          // Reasoning models can spend the whole output budget on
+          // reasoning. Apply any safe buffer to a per-attempt copy so round-robin
+          // retries never compound across models.
+          // UNCONDITIONAL — copying only when the buffer changed max_tokens left every
+          // other attempt sharing the caller's object, leaking chatCore's `body.model` forward.
+          let attemptBody = { ...(body as Record<string, unknown>) } as typeof body;
+          {
+            const bodyRecord = attemptBody as Record<string, unknown>;
+            const currentMaxTokens = toPositiveInteger(bodyRecord.max_tokens);
+            const bufferedMaxTokens = resolveReasoningBufferedMaxTokens(
+              modelStr,
+              bodyRecord.max_tokens,
+              { enabled: reasoningTokenBufferEnabled }
+            );
+            if (
+              currentMaxTokens !== null &&
+              bufferedMaxTokens !== null &&
+              bufferedMaxTokens !== currentMaxTokens
+            ) {
+              // Safe to write in place: bodyRecord is the per-attempt copy above, not the caller's.
+              bodyRecord.max_tokens = bufferedMaxTokens;
+              log.debug?.(
+                "COMBO-RR",
+                `Reasoning model ${modelStr}: adjusted max_tokens ${currentMaxTokens} -> ${bufferedMaxTokens}`
               );
             }
+          }
+
+          const result = await runAsAnswerFallback(
+            offset > 0 ? { fallback: "combo-step", attempts: offset } : null,
+            () =>
+              handleSingleModel(attemptBody, modelStr, {
+                ...targetForAttempt,
+                effectiveComboStrategy: "round-robin",
+                failoverBeforeRetry: config.failoverBeforeRetry,
+              })
+          );
+
+          // Success — validate response quality before returning
+          if (result.ok) {
+            let rrClone: Response;
+            try {
+              rrClone = result.clone();
+            } catch {
+              rrClone = result;
+            }
+            const quality = await validateResponseQuality(
+              rrClone,
+              clientRequestedStream,
+              log,
+              config.responseValidation
+            );
+            releaseQualityClone(rrClone, result, quality);
+            if (!quality.valid) {
+              releaseRejectedQualityResponse(rrClone, result);
+              log.warn(
+                "COMBO-RR",
+                `${modelStr} returned 200 but failed quality check: ${quality.reason}`
+              );
+              // Same rationale as handleComboChat's quality-fail branch —
+              // a quality-rejected 200 never marks the connection row unhealthy,
+              // so release the sticky pin here rather than on the next turn.
+              {
+                const rrSelectedConnectionId =
+                  result.headers?.get("X-TRouteAI-Selected-Connection-Id") ||
+                  result.headers?.get("x-trouteai-selected-connection-id") ||
+                  undefined;
+                releaseStickyPinOnFailure(
+                  _rrSessionSticky.messageHash,
+                  rrSelectedConnectionId || target.connectionId
+                );
+              }
+              recordComboRequest(combo.name, modelStr, {
+                success: false,
+                latencyMs: Date.now() - startTime,
+                fallbackCount,
+                strategy: "round-robin",
+                target: toRecordedTarget(target),
+              });
+              recordedAttempts++;
+              // Set terminal state so the fallback doesn't emit
+              // misleading ALL_ACCOUNTS_INACTIVE when the real issue is quality.
+              lastError = `Upstream response failed quality validation: ${quality.reason}`;
+              lastStatus = 502;
+              stepStatuses.push(502);
+              if (offset > 0) fallbackCount++;
+              break; // move to next model
+            }
+            const latencyMs = Date.now() - startTime;
+            log.info(
+              "COMBO-RR",
+              `${modelStr} succeeded (${latencyMs}ms, ${fallbackCount} fallbacks)`
+            );
+            recordComboRequest(combo.name, modelStr, {
+              success: true,
+              latencyMs,
+              fallbackCount,
+              strategy: "round-robin",
+              target: toRecordedTarget(target),
+            });
+            recordedAttempts++;
+
+            const selectedConnectionId =
+              result.headers?.get("X-TRouteAI-Selected-Connection-Id") ||
+              result.headers?.get("x-trouteai-selected-connection-id") ||
+              undefined;
+            const effectiveConnectionId = selectedConnectionId || target.connectionId || "";
+
+            const rawModel = parseModel(modelStr).model || modelStr;
+            if (provider && rawModel) {
+              const dcResult = decayModelFailureCount(provider, effectiveConnectionId, rawModel);
+              if (dcResult.cleared) {
+                log.info("COMBO-RR", `Model ${modelStr} fully recovered — lockout cleared`);
+              } else if (dcResult.newFailureCount > 0) {
+                log.debug?.(
+                  "COMBO-RR",
+                  `Model ${modelStr} decayed to failureCount=${dcResult.newFailureCount}`
+                );
+              }
+            }
+
+            if (provider && provider !== "unknown") {
+              recordProviderSuccess(provider, effectiveConnectionId || undefined);
+            }
+
+            if (stickyRoundRobinEnabled) {
+              recordStickyRoundRobinSuccess(combo.name, target, stickyLimit, filteredTargets);
+            } else {
+              // True round-robin (stickyLimit <= 1). The counter was advanced
+              // eagerly (+1 from the scheduled start index) before this loop ran, so
+              // when the scheduled model failed and a *different* model served via
+              // fallback, the next request reused the fallback-served model. Advance
+              // the pointer past the model that ACTUALLY served (modelIndex) instead,
+              // mirroring recordStickyRoundRobinSuccess's served-index logic. Read
+              // side applies `% modelCount`, so storing modelIndex + 1 is correct.
+              rrCounters.set(combo.name, modelIndex + 1);
+            }
+
+            // (re)record the sticky binding so the next turn re-pins (prompt-cache).
+            if (_rrSessionSticky.messageHash) {
+              const stickyConn = effectiveConnectionId || target.connectionId;
+              if (stickyConn) recordStickyBinding(_rrSessionSticky.messageHash, stickyConn);
+            }
+
+            if (provider) {
+              const connId = effectiveConnectionId || undefined;
+              void (async () => {
+                try {
+                  const { setLKGP } = await import("../../src/lib/localDb");
+                  await Promise.all([
+                    setLKGP(combo.name, target.executionKey, provider, connId),
+                    setLKGP(combo.name, combo.id || combo.name, provider, connId),
+                  ]);
+                } catch (err) {
+                  log.warn(
+                    "COMBO-RR",
+                    "Failed to record Last Known Good Provider. This is non-fatal.",
+                    {
+                      err,
+                    }
+                  );
+                }
+              })();
+            }
+            // Clone is consumed by quality check; original stays unlocked.
+            return offset > 0
+              ? withTRouteAIRoutingHeaders(result, {
+                  fallback: "combo-step",
+                  fallbackAttempts: offset,
+                })
+              : result;
+          }
+
+          // Extract error info
+          let errorText = result.statusText || "";
+          let retryAfter: ComboRetryAfter | null = null;
+          let errorBody: ComboErrorBody = null;
+          try {
+            const cloned = result.clone();
+            try {
+              const text = await cloned.text();
+              if (text) {
+                errorText = text.substring(0, 500);
+                errorBody = JSON.parse(text);
+                const parsedError = errorBody?.error;
+                errorText =
+                  (typeof parsedError === "object" && parsedError?.message) ||
+                  (typeof parsedError === "string" ? parsedError : null) ||
+                  errorBody?.message ||
+                  errorText;
+                retryAfter = errorBody?.retryAfter || null;
+              }
+            } catch {
+              /* Clone parse failed */
+            }
+          } catch {
+            /* Clone failed */
+          }
+
+          if (result.status === 499) {
+            log.info(
+              "COMBO-RR",
+              `Client disconnected (499) during ${modelStr} — stopping combo loop`
+            );
             recordComboRequest(combo.name, modelStr, {
               success: false,
               latencyMs: Date.now() - startTime,
@@ -2620,124 +2938,157 @@ async function handleRoundRobinCombo({
               target: toRecordedTarget(target),
             });
             recordedAttempts++;
-            // Set terminal state so the fallback doesn't emit
-            // misleading ALL_ACCOUNTS_INACTIVE when the real issue is quality.
-            lastError = `Upstream response failed quality validation: ${quality.reason}`;
-            lastStatus = 502;
-            if (offset > 0) fallbackCount++;
-            break; // move to next model
+            return result;
           }
-          const latencyMs = Date.now() - startTime;
-          log.info(
-            "COMBO-RR",
-            `${modelStr} succeeded (${latencyMs}ms, ${fallbackCount} fallbacks)`
-          );
-          recordComboRequest(combo.name, modelStr, {
-            success: true,
-            latencyMs,
-            fallbackCount,
-            strategy: "round-robin",
-            target: toRecordedTarget(target),
-          });
-          recordedAttempts++;
 
+          if (result.status === 429) {
+            retryAfter = retryAfter || retryAfterFromRateLimitAnswer(result);
+            if (!isUsageLimitAnswer(result)) limitsAreUsageLimits = false;
+          }
+          if (
+            retryAfter &&
+            (!earliestRetryAfter || new Date(retryAfter) < new Date(earliestRetryAfter))
+          ) {
+            earliestRetryAfter = retryAfter;
+          }
+
+          if (typeof errorText !== "string") {
+            try {
+              errorText = JSON.stringify(errorText);
+            } catch {
+              errorText = String(errorText);
+            }
+          }
+
+          const isStreamReadinessFailure =
+            (result.status === 502 || result.status === 504) &&
+            isStreamReadinessFailureErrorBody(errorBody);
+
+          // FIX 5: a local per-API-key token-limit 429 must not cool shared accounts.
+          const isTokenLimitBreach =
+            result.status === 429 && isTokenLimitBreachErrorBody(errorBody);
+
+          // Round-robin uses the same target-level fallback rule as other combo
+          // strategies: non-ok target responses fall through to the next target.
+          // Classification stays here only to support cooldown/semaphore pacing,
+          // not to decide whether fallback is allowed.
+          const rawError = errorBody?.error;
+          const structuredError =
+            rawError && typeof rawError === "object"
+              ? {
+                  // Upstream JSON may carry a numeric `code`/`type` (e.g. {"code":40001}).
+                  // Coerce to string if present instead of discarding, so downstream string
+                  // ops (.toLowerCase, .startsWith) can run safely without type crashes.
+                  code:
+                    (rawError as Record<string, unknown>).code !== undefined &&
+                    (rawError as Record<string, unknown>).code !== null
+                      ? String((rawError as Record<string, unknown>).code)
+                      : undefined,
+                  type:
+                    (rawError as Record<string, unknown>).type !== undefined &&
+                    (rawError as Record<string, unknown>).type !== null
+                      ? String((rawError as Record<string, unknown>).type)
+                      : undefined,
+                }
+              : undefined;
+          const scopedFailure = isScopedFailure(result.status, errorText, structuredError);
+          const fallbackResult = checkFallbackError(
+            result.status,
+            errorText,
+            0,
+            null,
+            provider,
+            result.headers,
+            profile,
+            structuredError
+          );
+          const { cooldownMs } = fallbackResult;
           const selectedConnectionId =
             result.headers?.get("X-TRouteAI-Selected-Connection-Id") ||
             result.headers?.get("x-trouteai-selected-connection-id") ||
             undefined;
-          const effectiveConnectionId = selectedConnectionId || target.connectionId || "";
+          const targetWithConnection = selectedConnectionId
+            ? { ...target, connectionId: selectedConnectionId }
+            : target;
 
-          const rawModel = parseModel(modelStr).model || modelStr;
-          if (provider && rawModel) {
-            const dcResult = decayModelFailureCount(provider, effectiveConnectionId, rawModel);
-            if (dcResult.cleared) {
-              log.info("COMBO-RR", `Model ${modelStr} fully recovered — lockout cleared`);
-            } else if (dcResult.newFailureCount > 0) {
-              log.debug?.(
-                "COMBO-RR",
-                `Model ${modelStr} decayed to failureCount=${dcResult.newFailureCount}`
-              );
-            }
-          }
-
-          if (provider && provider !== "unknown") {
-            recordProviderSuccess(provider, effectiveConnectionId || undefined);
-          }
-
-          if (stickyRoundRobinEnabled) {
-            recordStickyRoundRobinSuccess(combo.name, target, stickyLimit, filteredTargets);
-          } else {
-            // True round-robin (stickyLimit <= 1). The counter was advanced
-            // eagerly (+1 from the scheduled start index) before this loop ran, so
-            // when the scheduled model failed and a *different* model served via
-            // fallback, the next request reused the fallback-served model. Advance
-            // the pointer past the model that ACTUALLY served (modelIndex) instead,
-            // mirroring recordStickyRoundRobinSuccess's served-index logic. Read
-            // side applies `% modelCount`, so storing modelIndex + 1 is correct.
-            rrCounters.set(combo.name, modelIndex + 1);
-          }
-
-          // (re)record the sticky binding so the next turn re-pins (prompt-cache).
-          if (_rrSessionSticky.messageHash) {
-            const stickyConn = effectiveConnectionId || target.connectionId;
-            if (stickyConn) recordStickyBinding(_rrSessionSticky.messageHash, stickyConn);
-          }
-
-          if (provider) {
-            const connId = effectiveConnectionId || undefined;
-            void (async () => {
-              try {
-                const { setLKGP } = await import("../../src/lib/localDb");
-                await Promise.all([
-                  setLKGP(combo.name, target.executionKey, provider, connId),
-                  setLKGP(combo.name, combo.id || combo.name, provider, connId),
-                ]);
-              } catch (err) {
-                log.warn(
-                  "COMBO-RR",
-                  "Failed to record Last Known Good Provider. This is non-fatal.",
-                  {
-                    err,
-                  }
-                );
-              }
-            })();
-          }
-          // Clone is consumed by quality check; original stays unlocked.
-          return result;
-        }
-
-        // Extract error info
-        let errorText = result.statusText || "";
-        let retryAfter: ComboRetryAfter | null = null;
-        let errorBody: ComboErrorBody = null;
-        try {
-          const cloned = result.clone();
-          try {
-            const text = await cloned.text();
-            if (text) {
-              errorText = text.substring(0, 500);
-              errorBody = JSON.parse(text);
-              const parsedError = errorBody?.error;
-              errorText =
-                (typeof parsedError === "object" && parsedError?.message) ||
-                (typeof parsedError === "string" ? parsedError : null) ||
-                errorBody?.message ||
-                errorText;
-              retryAfter = errorBody?.retryAfter || null;
-            }
-          } catch {
-            /* Clone parse failed */
-          }
-        } catch {
-          /* Clone failed */
-        }
-
-        if (result.status === 499) {
-          log.info(
-            "COMBO-RR",
-            `Client disconnected (499) during ${modelStr} — stopping combo loop`
+          const isAllAccountsRateLimited = isAllAccountsRateLimitedResponse(
+            result.status,
+            result.headers?.get("content-type") ?? null,
+            errorText
           );
+
+          // If the entire provider quota is exhausted, mark it so subsequent
+          // same-provider targets are skipped immediately. API-key 429s still use
+          // the short resilience cooldown, but explicit quota text should stop the
+          // combo from trying another target for the same provider in this request.
+          // Classify the upstream error and update the exhaustion sets
+          // (shared with handleComboChat). Returns whether the provider is fully exhausted.
+          const providerExhausted = applyComboTargetExhaustion(targetWithConnection, {
+            result,
+            fallbackResult,
+            errorText,
+            rawModel: parseModel(modelStr).model || modelStr,
+            isTokenLimitBreach,
+            allAccountsRateLimited: isAllAccountsRateLimited,
+            sets: { exhaustedProviders, exhaustedConnections, transientRateLimitedProviders },
+            log,
+            tag: "COMBO-RR",
+            exhaustedLogLevel: "debug",
+            structuredError,
+            pinnedConnectionId: target.connectionId ?? null,
+          });
+          // The provider's "high load" answer to a turn of a conversation pinned to its account: the
+          // turn keeps its account and its pin (the prompt cache is there). Other requests go on as
+          // for any failed answer.
+          const onPinnedAccount =
+            _rrSessionSticky.stuck &&
+            !!target.connectionId &&
+            target.connectionId === _rrSessionSticky.targets[0]?.connectionId;
+          const highLoad = onPinnedAccount && isHighLoadAnswer(result.status, errorText);
+          // Mirrors handleComboChat's exhaustion-point release above.
+          if (!highLoad) {
+            releaseStickyPinOnFailure(
+              _rrSessionSticky.messageHash,
+              targetWithConnection.connectionId
+            );
+          }
+
+          // Transient errors → mark in semaphore so round-robin stops stampeding this target.
+          if (
+            !isStreamReadinessFailure &&
+            !isTokenLimitBreach &&
+            !scopedFailure &&
+            TRANSIENT_FOR_SEMAPHORE.includes(result.status) &&
+            cooldownMs > 0
+          ) {
+            const slotPauseMs = Math.min(cooldownMs, SLOT_PAUSE_MAX_MS);
+            semaphore.markRateLimited(semaphoreKey, slotPauseMs);
+            log.warn("COMBO-RR", `${modelStr} error ${result.status}, slots paused ${slotPauseMs}ms`);
+          }
+
+          if (isAllAccountsRateLimited) {
+            log.info(
+              "COMBO-RR",
+              `All accounts rate-limited for ${modelStr}, falling back to next model`
+            );
+          }
+
+          // Transient error → retry same model.
+          // A token-limit 429 is terminal for the client — never retry it.
+          const isTransient =
+            !isStreamReadinessFailure &&
+            !isTokenLimitBreach &&
+            [408, 429, 500, 502, 503, 504].includes(result.status);
+          if (
+            retry < maxRetries &&
+            isTransient &&
+            !providerExhausted &&
+            !retryAfterOutlastsRetry(result, retryDelayMs)
+          ) {
+            continue;
+          }
+
+          // Done with this model
           recordComboRequest(combo.name, modelStr, {
             success: false,
             latencyMs: Date.now() - startTime,
@@ -2746,197 +3097,70 @@ async function handleRoundRobinCombo({
             target: toRecordedTarget(target),
           });
           recordedAttempts++;
-          return result;
-        }
-
-        if (
-          retryAfter &&
-          (!earliestRetryAfter || new Date(retryAfter) < new Date(earliestRetryAfter))
-        ) {
-          earliestRetryAfter = retryAfter;
-        }
-
-        if (typeof errorText !== "string") {
-          try {
-            errorText = JSON.stringify(errorText);
-          } catch {
-            errorText = String(errorText);
+          lastError = errorText || String(result.status);
+          lastStatus = result.status;
+          stepStatuses.push(result.status);
+          if (offset > 0) fallbackCount++;
+          // A pinned turn never leaves its account for "high load": it had its retry there.
+          if (highLoad) {
+            log.warn("COMBO-RR", `${modelStr} answered "high load"; the conversation stays on its account`);
+            return result;
           }
-        }
+          log.warn("COMBO-RR", `${modelStr} failed, trying next model`, { status: result.status });
 
-        const isStreamReadinessFailure =
-          (result.status === 502 || result.status === 504) &&
-          isStreamReadinessFailureErrorBody(errorBody);
-
-        // FIX 5: a local per-API-key token-limit 429 must not cool shared accounts.
-        const isTokenLimitBreach = result.status === 429 && isTokenLimitBreachErrorBody(errorBody);
-
-        // Round-robin uses the same target-level fallback rule as other combo
-        // strategies: non-ok target responses fall through to the next target.
-        // Classification stays here only to support cooldown/semaphore pacing,
-        // not to decide whether fallback is allowed.
-        const rawError = errorBody?.error;
-        const structuredError =
-          rawError && typeof rawError === "object"
-            ? {
-                // Upstream JSON may carry a numeric `code`/`type` (e.g. {"code":40001}).
-                // Coerce to string if present instead of discarding, so downstream string
-                // ops (.toLowerCase, .startsWith) can run safely without type crashes.
-                code:
-                  (rawError as Record<string, unknown>).code !== undefined &&
-                  (rawError as Record<string, unknown>).code !== null
-                    ? String((rawError as Record<string, unknown>).code)
-                    : undefined,
-                type:
-                  (rawError as Record<string, unknown>).type !== undefined &&
-                  (rawError as Record<string, unknown>).type !== null
-                    ? String((rawError as Record<string, unknown>).type)
-                    : undefined,
-              }
-            : undefined;
-        const scopedFailure = isScopedFailure(result.status, errorText, structuredError);
-        const fallbackResult = checkFallbackError(
-          result.status,
-          errorText,
-          0,
-          null,
-          provider,
-          result.headers,
-          profile,
-          structuredError
-        );
-        const { cooldownMs } = fallbackResult;
-        const selectedConnectionId =
-          result.headers?.get("X-TRouteAI-Selected-Connection-Id") ||
-          result.headers?.get("x-trouteai-selected-connection-id") ||
-          undefined;
-        const targetWithConnection = selectedConnectionId
-          ? { ...target, connectionId: selectedConnectionId }
-          : target;
-
-        const isAllAccountsRateLimited = isAllAccountsRateLimitedResponse(
-          result.status,
-          result.headers?.get("content-type") ?? null,
-          errorText
-        );
-
-        // If the entire provider quota is exhausted, mark it so subsequent
-        // same-provider targets are skipped immediately. API-key 429s still use
-        // the short resilience cooldown, but explicit quota text should stop the
-        // combo from trying another target for the same provider in this request.
-        // Classify the upstream error and update the exhaustion sets
-        // (shared with handleComboChat). Returns whether the provider is fully exhausted.
-        const providerExhausted = applyComboTargetExhaustion(targetWithConnection, {
-          result,
-          fallbackResult,
-          errorText,
-          rawModel: parseModel(modelStr).model || modelStr,
-          isTokenLimitBreach,
-          allAccountsRateLimited: isAllAccountsRateLimited,
-          sets: { exhaustedProviders, exhaustedConnections, transientRateLimitedProviders },
-          log,
-          tag: "COMBO-RR",
-          exhaustedLogLevel: "debug",
-          structuredError,
-          pinnedConnectionId: target.connectionId ?? null,
-        });
-        // Mirrors handleComboChat's exhaustion-point release above.
-        releaseStickyPinOnFailure(_rrSessionSticky.messageHash, targetWithConnection.connectionId);
-
-        // Transient errors → mark in semaphore so round-robin stops stampeding this target.
-        if (
-          !isStreamReadinessFailure &&
-          !isTokenLimitBreach &&
-          !scopedFailure &&
-          TRANSIENT_FOR_SEMAPHORE.includes(result.status) &&
-          cooldownMs > 0
-        ) {
-          semaphore.markRateLimited(semaphoreKey, cooldownMs);
-          log.warn("COMBO-RR", `${modelStr} error ${result.status}, cooldown ${cooldownMs}ms`);
-        }
-
-        if (isAllAccountsRateLimited) {
-          log.info(
-            "COMBO-RR",
-            `All accounts rate-limited for ${modelStr}, falling back to next model`
-          );
-        }
-
-        // Transient error → retry same model.
-        // A token-limit 429 is terminal for the client — never retry it.
-        const isTransient =
-          !isStreamReadinessFailure &&
-          !isTokenLimitBreach &&
-          [408, 429, 500, 502, 503, 504].includes(result.status);
-        if (
-          retry < maxRetries &&
-          isTransient &&
-          !providerExhausted &&
-          !retryAfterOutlastsRetry(result, retryDelayMs)
-        ) {
-          continue;
-        }
-
-        // Done with this model
-        recordComboRequest(combo.name, modelStr, {
-          success: false,
-          latencyMs: Date.now() - startTime,
-          fallbackCount,
-          strategy: "round-robin",
-          target: toRecordedTarget(target),
-        });
-        recordedAttempts++;
-        lastError = errorText || String(result.status);
-        lastStatus = result.status;
-        if (offset > 0) fallbackCount++;
-        log.warn("COMBO-RR", `${modelStr} failed, trying next model`, { status: result.status });
-
-        if (
-          resilienceSettings.providerCooldown.enabled &&
-          provider &&
-          provider !== "unknown" &&
-          !scopedFailure &&
-          !(
-            (result.status === 500 || result.status === 429) &&
-            hasPerModelQuota(provider, parseModel(modelStr).model || modelStr)
-          )
-        ) {
-          recordProviderCooldown(
-            provider,
-            targetWithConnection.connectionId ?? undefined,
-            resilienceSettings
-          );
-        }
-
-        const fallbackWaitMs =
-          fallbackDelayMs > 0 && cooldownMs > 0 && cooldownMs <= MAX_FALLBACK_WAIT_MS
-            ? Math.min(cooldownMs, fallbackDelayMs)
-            : 0;
-        if ([502, 503, 504].includes(result.status) && fallbackWaitMs > 0) {
-          log.debug?.("COMBO-RR", `Waiting ${fallbackWaitMs}ms before fallback to next model`);
-          await new Promise((resolve) => {
-            const timer = setTimeout(resolve, fallbackWaitMs);
-            signal?.addEventListener(
-              "abort",
-              () => {
-                clearTimeout(timer);
-                resolve(undefined);
-              },
-              { once: true }
+          if (
+            resilienceSettings.providerCooldown.enabled &&
+            provider &&
+            provider !== "unknown" &&
+            !scopedFailure &&
+            !highLoad &&
+            !(
+              (result.status === 500 || result.status === 429) &&
+              hasPerModelQuota(provider, parseModel(modelStr).model || modelStr)
+            )
+          ) {
+            recordProviderCooldown(
+              provider,
+              targetWithConnection.connectionId ?? undefined,
+              resilienceSettings
             );
-          });
-          if (signal?.aborted) {
-            log.info("COMBO-RR", `Client disconnected during fallback wait — aborting`);
-            return errorResponse(499, "Client disconnected");
           }
-        }
 
-        break;
+          const fallbackWaitMs =
+            fallbackDelayMs > 0 && cooldownMs > 0 && cooldownMs <= MAX_FALLBACK_WAIT_MS
+              ? Math.min(cooldownMs, fallbackDelayMs)
+              : 0;
+          if ([502, 503, 504].includes(result.status) && fallbackWaitMs > 0) {
+            log.debug?.("COMBO-RR", `Waiting ${fallbackWaitMs}ms before fallback to next model`);
+            await new Promise((resolve) => {
+              const timer = setTimeout(resolve, fallbackWaitMs);
+              signal?.addEventListener(
+                "abort",
+                () => {
+                  clearTimeout(timer);
+                  resolve(undefined);
+                },
+                { once: true }
+              );
+            });
+            if (signal?.aborted) {
+              log.info("COMBO-RR", `Client disconnected during fallback wait — aborting`);
+              return errorResponse(499, "Client disconnected");
+            }
+          }
+
+          break;
+        }
+      } finally {
+        // ALWAYS release semaphore slot
+        recordSlotHold(combo.name, Date.now() - slotTakenAt);
+        release();
       }
-    } finally {
-      // ALWAYS release semaphore slot
-      release();
     }
+  } finally {
+    // A slot the queue handed over goes back on every way out of the loop, a throw included.
+    grantedSlot?.release();
+    grantedSlot = null;
   }
 
   // All models exhausted
@@ -2994,17 +3218,19 @@ async function handleRoundRobinCombo({
     );
   }
 
-  const status = lastStatus;
+  const status = comboFinalStatus(stepStatuses, lastStatus);
   const msg = lastError || "All round-robin combo models unavailable";
 
   if (earliestRetryAfter && isRetryAfterEligibleStatus(status)) {
     const retryHuman = formatRetryAfter(toRetryAfterDisplayValue(earliestRetryAfter));
     log.warn("COMBO-RR", `All models failed | ${msg} (${retryHuman})`);
-    return unavailableResponse(status, msg, earliestRetryAfter, retryHuman);
+    return unavailableResponse(status, msg, earliestRetryAfter, retryHuman, {
+      usageLimit: limitsAreUsageLimits,
+    });
   }
 
   log.warn("COMBO-RR", `All models failed | ${msg}`);
-  return new Response(JSON.stringify({ error: { message: msg } }), {
+  return new Response(JSON.stringify(buildErrorBody(status, msg)), {
     status,
     headers: { "Content-Type": "application/json" },
   });

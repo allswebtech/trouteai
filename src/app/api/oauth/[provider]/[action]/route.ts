@@ -15,6 +15,7 @@ import {
   buildOAuthConnectionCreatePayload,
   findExistingOAuthConnectionMatch,
 } from "@/lib/oauth/connectionPersistence";
+import { AWS_REGION_PATTERN } from "@/lib/oauth/constants/oauth";
 import { createDeviceFlowTicket, getDeviceFlowTicketStatus } from "@/lib/oauth/deviceFlowTickets";
 import {
   createProviderConnection,
@@ -223,6 +224,14 @@ export async function GET(
             (requestDeviceCode as any)(provider, null, providerOverrideConfig)
           );
         } else if ((provider === "kiro" || provider === "amazon-q") && startUrl) {
+          // The region goes into the OIDC host names below, which are then fetched: only the
+          // shape of an AWS region may get there, never a host of someone else's choosing.
+          if (!AWS_REGION_PATTERN.test(region)) {
+            return NextResponse.json(
+              { error: "region must be a valid AWS region (e.g. us-east-1)" },
+              { status: 400 }
+            );
+          }
           const providerOverrideConfig = {
             ...providerData.config,
             startUrl,

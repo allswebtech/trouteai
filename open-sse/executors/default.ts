@@ -316,7 +316,12 @@ export class DefaultExecutor extends BaseExecutor {
     }
   }
 
-  buildHeaders(credentials, stream = true, clientHeaders?: Record<string, string> | null) {
+  buildHeaders(
+    credentials,
+    stream = true,
+    clientHeaders?: Record<string, string> | null,
+    model?: string
+  ) {
     const { headers, effectiveKey } = this.buildHeadersPreamble(credentials, stream);
 
     switch (this.provider) {
@@ -390,9 +395,13 @@ export class DefaultExecutor extends BaseExecutor {
       }
       case "claude":
       case "anthropic":
-        effectiveKey
-          ? (headers["x-api-key"] = effectiveKey)
-          : (headers["Authorization"] = `Bearer ${credentials.accessToken}`);
+        // A `claude setup-token` token (sk-ant-oat...) saved in the key field is an OAuth
+        // access token: the service refuses it as x-api-key and takes it as a bearer token.
+        if (effectiveKey && !effectiveKey.startsWith("sk-ant-oat")) {
+          headers["x-api-key"] = effectiveKey;
+        } else {
+          headers["Authorization"] = `Bearer ${effectiveKey || credentials.accessToken}`;
+        }
         break;
       case "glm":
       case "glmt":
@@ -500,7 +509,9 @@ export class DefaultExecutor extends BaseExecutor {
       const clientBeta = clientHeaders["anthropic-beta"] ?? clientHeaders["Anthropic-Beta"] ?? null;
       const betaKey = Object.keys(headers).find((key) => key.toLowerCase() === "anthropic-beta");
       if (betaKey && clientBeta) {
-        headers[betaKey] = mergeClientAnthropicBeta(headers[betaKey], clientBeta);
+        headers[betaKey] = mergeClientAnthropicBeta(headers[betaKey], clientBeta, undefined, {
+          model,
+        });
       }
     }
 

@@ -80,6 +80,12 @@ function isRateLimited(gate: ModelGate): boolean {
   return true;
 }
 
+// A gate may be dropped only when nothing runs, nothing waits and no pause is set: a dropped
+// gate would come back without its pause and let new requests through it.
+function isIdle(gate: ModelGate): boolean {
+  return gate.running === 0 && gate.queue.length === 0 && !isRateLimited(gate);
+}
+
 /**
  * Try to drain queued requests when slots become available
  * @param {string} modelStr
@@ -96,7 +102,7 @@ function drainQueue(modelStr: string): void {
     next.resolve(createReleaseFn(modelStr));
   }
 
-  if (gate.running === 0 && gate.queue.length === 0) {
+  if (isIdle(gate)) {
     gates.delete(modelStr);
   }
 }
@@ -114,13 +120,58 @@ function createReleaseFn(modelStr: string): () => void {
     const gate = gates.get(modelStr);
     if (gate && gate.running > 0) {
       gate.running--;
-      if (gate.running === 0 && gate.queue.length === 0) {
+      if (isIdle(gate)) {
         gates.delete(modelStr);
-        return;
+      } else {
+        drainQueue(modelStr);
       }
-      drainQueue(modelStr);
+      notifySlotFree(modelStr);
     }
   };
+}
+
+// Listeners told when a slot of a gate may have become free (a release or the end of a
+// rate-limit pause). The combo fair queue uses this to hand the slot to its first waiter.
+const slotFreeListeners = new Set<(modelStr: string) => void>();
+
+function notifySlotFree(modelStr: string): void {
+  for (const listener of slotFreeListeners) {
+    try {
+      listener(modelStr);
+    } catch {
+      /* a listener never breaks a release */
+    }
+  }
+}
+
+export function onSlotFree(listener: (modelStr: string) => void): () => void {
+  slotFreeListeners.add(listener);
+  return () => slotFreeListeners.delete(listener);
+}
+
+/**
+ * Take a slot only when one is free right now (no wait, no queue). Returns the release
+ * function, or null when the gate is full, paused, or has its own waiters.
+ */
+export function tryAcquire(modelStr: string, maxConcurrency = 3): (() => void) | null {
+  const gate = getGate(modelStr, maxConcurrency);
+  if (gate.queue.length === 0 && gate.running < gate.max && !isRateLimited(gate)) {
+    gate.running++;
+    return createReleaseFn(modelStr);
+  }
+  if (isIdle(gate)) gates.delete(modelStr);
+  return null;
+}
+
+/** True while a gate's slots are paused after a failed answer, without creating it. */
+export function isPaused(modelStr: string): boolean {
+  const gate = gates.get(modelStr);
+  return !!gate && isRateLimited(gate);
+}
+
+/** How many slots of a gate are in use, without creating it. */
+export function runningCount(modelStr: string): number {
+  return gates.get(modelStr)?.running ?? 0;
 }
 
 /**
@@ -156,7 +207,7 @@ export function acquire(
     };
     err.code = "SEMAPHORE_QUEUE_FULL";
     // Drop a freshly-created idle gate so we don't leak an empty entry.
-    if (gate.running === 0 && gate.queue.length === 0) gates.delete(modelStr);
+    if (isIdle(gate)) gates.delete(modelStr);
     return Promise.reject(err);
   }
 
@@ -194,6 +245,7 @@ export function markRateLimited(modelStr: string, cooldownMs: number): void {
     if (gate.rateLimitedUntil && Date.now() >= gate.rateLimitedUntil) {
       gate.rateLimitedUntil = null;
       drainQueue(modelStr);
+      notifySlotFree(modelStr);
     }
   }, cooldownMs + 50); // +50ms buffer
 }

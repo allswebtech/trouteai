@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { getStainlessTimeoutSeconds } from "@/shared/utils/runtimeTimeouts";
-import { ANTHROPIC_VERSION_HEADER } from "../config/anthropicHeaders.ts";
+import {
+  ANTHROPIC_VERSION_HEADER,
+  modelSupportsContext1mBeta,
+} from "../config/anthropicHeaders.ts";
 import {
   CLAUDE_CODE_COMPATIBLE_STAINLESS_PACKAGE_VERSION,
   CLAUDE_CODE_COMPATIBLE_STAINLESS_RUNTIME_VERSION,
@@ -55,14 +58,6 @@ const CLAUDE_CODE_COMPATIBLE_DEFAULT_SYSTEM_BLOCKS = [
     type: "text",
     text: "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
   },
-];
-const CONTEXT_1M_SUPPORTED_MODELS = [
-  "claude-fable-5",
-  "claude-sonnet-5",
-  "claude-sonnet-4-6",
-  "claude-opus-4-8",
-  "claude-opus-4-7",
-  "claude-opus-4-6",
 ];
 export const CLAUDE_CODE_COMPATIBLE_STAINLESS_TIMEOUT_SECONDS = getStainlessTimeoutSeconds(
   process.env
@@ -168,16 +163,7 @@ export function appendAnthropicBetaHeader(
   }
 }
 
-export function modelSupportsContext1mBeta(model: string | null | undefined): boolean {
-  const normalizedModel = String(model || "")
-    .trim()
-    .toLowerCase()
-    .replace(/-\d{8}$/, "");
-
-  return CONTEXT_1M_SUPPORTED_MODELS.some(
-    (supported) => normalizedModel === supported || normalizedModel.startsWith(`${supported}-`)
-  );
-}
+export { modelSupportsContext1mBeta };
 
 export function buildClaudeCodeCompatibleHeaders(
   apiKey: string,

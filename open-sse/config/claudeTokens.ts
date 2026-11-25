@@ -1,6 +1,6 @@
 /**
- * Token estimates for Claude models, measured against Kiro's own counts on 2026-11-10
- * (31 slices of code, markdown, JSON, YAML, SQL and prose).
+ * Token estimates for Claude models, measured against Kiro's own counts (31 slices of code,
+ * markdown, JSON, YAML, SQL and prose).
  *
  * Two tokenizers: the newer one (Claude 5.x, Opus 4.7 / 4.8: identical counts on every sample)
  * gives about 1.61 tokens per cl100k token (per sample 1.23-2.51; SQL highest, `ls` output
@@ -55,6 +55,15 @@ export function kiroRequestOverheadTokens(model: unknown): number {
   return 0;
 }
 
+/**
+ * Tokens a provider adds around every request it is sent (its own instructions), as far as
+ * they are known: Kiro's, nothing for the others. They are part of the context the model
+ * sees, but not of the client's content.
+ */
+export function providerRequestOverheadTokens(provider: unknown, model: unknown): number {
+  return provider === "kiro" ? kiroRequestOverheadTokens(model) : 0;
+}
+
 function textLength(value: unknown, depth = 0): number {
   if (depth > 6 || value == null) return 0;
   if (typeof value === "string") return value.length;
@@ -103,6 +112,6 @@ export function estimateRequestInputTokens(
   }
   if (chars === 0) return 0;
   const perToken = claudeCharsPerToken(model) || 4;
-  const overhead = provider === "kiro" ? kiroRequestOverheadTokens(model) : 0;
+  const overhead = providerRequestOverheadTokens(provider, model);
   return Math.ceil(chars / perToken) + overhead;
 }

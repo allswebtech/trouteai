@@ -34,11 +34,6 @@ declare namespace NodeJS {
 // Optional native dependency (not installed by default); loaded lazily with a typed cast.
 declare module "keytar";
 
-declare module "node-machine-id" {
-  export function machineIdSync(original?: boolean): string;
-  export function machineId(original?: boolean): Promise<string>;
-}
-
 declare module "fetch-socks" {
   export function socksDispatcher(
     proxy: { type: number; host: string; port: number },

@@ -116,11 +116,13 @@ export function buildTRouteAIResponseMetaHeaders({
   cacheHit = false,
   costUsd = 0,
   costSavedUsd = undefined,
+  fallback = null,
   fallbackAttempts = 0,
   latencyMs = 0,
   model = null,
   provider = null,
   requestId = null,
+  requestedModel = null,
   strategy = null,
   usage = null,
 }: {
@@ -134,11 +136,15 @@ export function buildTRouteAIResponseMetaHeaders({
    * responses); pass `0` to explicitly mark a free-model HIT that saved nothing.
    */
   costSavedUsd?: unknown;
+  /** Short reason token(s) when the answer did not come from the first choice. */
+  fallback?: string | null;
   fallbackAttempts?: number;
   latencyMs?: unknown;
   model?: string | null;
   provider?: string | null;
   requestId?: string | null;
+  /** The model string the client sent. */
+  requestedModel?: string | null;
   /**
    * Routing decision (combo strategy name, or `"single"` for a non-combo
    * request) surfaced via `X-TRouteAI-Decision`.
@@ -162,6 +168,14 @@ export function buildTRouteAIResponseMetaHeaders({
 
   if (typeof requestId === "string" && requestId.trim().length > 0) {
     headers[TROUTEAI_RESPONSE_HEADERS.requestId] = toHeaderValue(requestId);
+  }
+
+  if (typeof requestedModel === "string" && requestedModel.trim().length > 0) {
+    headers[TROUTEAI_RESPONSE_HEADERS.requestedModel] = toHeaderValue(requestedModel);
+  }
+
+  if (typeof fallback === "string" && fallback.trim().length > 0) {
+    headers[TROUTEAI_RESPONSE_HEADERS.fallback] = toHeaderValue(fallback);
   }
 
   if (typeof provider === "string" && provider.trim().length > 0) {
@@ -239,6 +253,75 @@ export function attachTRouteAIMetaToResponse(
       headers: response.headers,
     });
     attachTRouteAIMetaHeaders(cloned.headers, meta);
+    return cloned;
+  }
+}
+
+/** Joins fallback reason tokens into one comma list, keeping order and dropping repeats. */
+export function mergeFallbackTokens(...values: Array<string | null | undefined>): string {
+  const seen: string[] = [];
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    for (const token of value.split(",")) {
+      const t = token.trim();
+      if (t && !seen.includes(t)) seen.push(t);
+    }
+  }
+  return seen.join(", ");
+}
+
+/**
+ * Says who answered, on any Response (an answer or an error, streamed or not): sets the
+ * requested-model header when it is missing, adds the answering model and provider only when
+ * the response does not name them yet (the innermost layer knows best), appends a fallback
+ * token and adds to the fallback-attempts count. Outer layers (a combo, the global fallback)
+ * call it after inner ones, so their facts add up instead of replacing each other.
+ */
+export function withTRouteAIRoutingHeaders(
+  response: Response,
+  facts: {
+    requestedModel?: string | null;
+    model?: string | null;
+    provider?: string | null;
+    fallback?: string | null;
+    fallbackAttempts?: number;
+  }
+): Response {
+  if (!response) return response;
+  const apply = (headers: Headers) => {
+    const H = TROUTEAI_RESPONSE_HEADERS;
+    const setIfMissing = (name: string, value: string | null | undefined) => {
+      if (typeof value === "string" && value.trim() && !headers.has(name)) {
+        headers.set(name, toHeaderValue(value));
+      }
+    };
+    setIfMissing(H.requestedModel, facts.requestedModel);
+    setIfMissing(H.model, facts.model);
+    if (typeof facts.provider === "string" && facts.provider.trim()) {
+      setIfMissing(H.provider, getProviderAlias(facts.provider));
+    }
+    if (typeof facts.fallback === "string" && facts.fallback.trim()) {
+      headers.set(
+        H.fallback,
+        toHeaderValue(mergeFallbackTokens(headers.get(H.fallback), facts.fallback))
+      );
+    }
+    const added = toNonNegativeInteger(facts.fallbackAttempts);
+    if (added > 0) {
+      const current = toNonNegativeInteger(headers.get(H.fallbackAttempts));
+      headers.set(H.fallbackAttempts, String(current + added));
+    }
+  };
+  try {
+    apply(response.headers);
+    return response;
+  } catch {
+    const cloned = new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+    apply(cloned.headers);
     return cloned;
   }
 }

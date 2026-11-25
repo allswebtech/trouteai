@@ -39,7 +39,7 @@
  * fields. Non-transient errors (400, 401, 403, 404, …) fail immediately — retrying
  * a bad-request or auth error wastes quota and will never succeed.
  */
-import { errorResponse } from "../utils/error.ts";
+import { errorResponse, planUsageHeaders } from "../utils/error.ts";
 import type { ComboLogger, HandleSingleModel } from "./combo/types.ts";
 // extractPanelText is a generic assistant-text extractor (OpenAI chat / Claude /
 // Gemini / Responses) — reused here to read each step's output, not fusion-specific.
@@ -202,7 +202,13 @@ export async function handlePipelineChat({
     if (!res.ok) {
       log.warn("PIPELINE", `Step ${i + 1} (${step.model}) failed`, { status: res.status });
       const status = res.status >= 400 && res.status <= 599 ? res.status : 502;
-      return errorResponse(status, `Pipeline step ${i + 1} (${step.model}) failed`);
+      // The step's own retry-after and plan-usage headers go with its status, so a step at
+      // its usage limit still tells the client when the limit resets.
+      const failed = errorResponse(status, `Pipeline step ${i + 1} (${step.model}) failed`);
+      for (const [name, value] of Object.entries(planUsageHeaders(res.headers, status))) {
+        failed.headers.set(name, value);
+      }
+      return failed;
     }
     try {
       const json = await res.clone().json();

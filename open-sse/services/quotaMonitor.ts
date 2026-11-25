@@ -9,6 +9,7 @@
 
 import { registerQuotaFetcher, type QuotaFetcher } from "./quotaPreflight.ts";
 import { getSessionInfo } from "./sessionManager.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 export { registerQuotaFetcher };
 export type { QuotaFetcher };
@@ -79,20 +80,22 @@ const activeMonitors = new Map<string, MonitorState>();
 const MAX_ALERT_ENTRIES = 500;
 const alertSuppression = new Map<string, number>();
 
-const _alertSweep = setInterval(() => {
-  const now = Date.now();
-  for (const [key, timestamp] of alertSuppression) {
-    if (now - timestamp > ALERT_SUPPRESS_WINDOW_MS) alertSuppression.delete(key);
-  }
-  while (alertSuppression.size > MAX_ALERT_ENTRIES) {
-    const oldestKey = alertSuppression.keys().next().value;
-    if (oldestKey !== undefined) alertSuppression.delete(oldestKey);
-    else break;
-  }
-}, 60_000);
-if (typeof _alertSweep === "object" && "unref" in _alertSweep) {
-  (_alertSweep as { unref?: () => void }).unref?.();
-}
+// Pauses while the server is idle: nothing adds entries then.
+setIdleAwareInterval(
+  "quota-alert-sweep",
+  () => {
+    const now = Date.now();
+    for (const [key, timestamp] of alertSuppression) {
+      if (now - timestamp > ALERT_SUPPRESS_WINDOW_MS) alertSuppression.delete(key);
+    }
+    while (alertSuppression.size > MAX_ALERT_ENTRIES) {
+      const oldestKey = alertSuppression.keys().next().value;
+      if (oldestKey !== undefined) alertSuppression.delete(oldestKey);
+      else break;
+    }
+  },
+  60_000
+);
 // Registry mirror from quotaPreflight (same Map reference via re-export)
 const quotaFetcherRegistry = new Map<string, QuotaFetcher>();
 export function registerMonitorFetcher(provider: string, fetcher: QuotaFetcher): void {

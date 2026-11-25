@@ -32,6 +32,7 @@ import type {
   CapabilitiesByProvider,
   ModelsDevData,
 } from "./modelsDevSync/transform";
+import { runUnlessIdle } from "@/lib/idleState";
 
 // Re-export the pure transform layer (moved to ./modelsDevSync/transform)
 // so this module's public API is unchanged.
@@ -592,29 +593,39 @@ export function startPeriodicSync(intervalMs?: number): void {
     return promise;
   };
 
-  // Initial sync (non-blocking)
-  launchSync()
-    .then((result) => {
-      if (result.success) {
-        console.log(
-          `[MODELS_DEV] Initial sync complete: ${result.modelCount} pricing entries, ${result.capabilityCount} capabilities from ${result.providerCount} providers`
-        );
-      }
-    })
-    .catch((err) => {
-      console.warn("[MODELS_DEV] Initial sync error:", err instanceof Error ? err.message : err);
-    });
-
-  syncTimer = setInterval(() => {
+  // Initial sync (non-blocking). Like every run, it waits for the next request while the
+  // server is idle.
+  runUnlessIdle("models-dev-sync", () =>
     launchSync()
       .then((result) => {
         if (result.success) {
-          console.log(`[MODELS_DEV] Periodic sync complete: ${result.modelCount} pricing entries`);
+          console.log(
+            `[MODELS_DEV] Initial sync complete: ${result.modelCount} pricing entries, ${result.capabilityCount} capabilities from ${result.providerCount} providers`
+          );
         }
       })
       .catch((err) => {
-        console.warn("[MODELS_DEV] Periodic sync error:", err instanceof Error ? err.message : err);
-      });
+        console.warn("[MODELS_DEV] Initial sync error:", err instanceof Error ? err.message : err);
+      })
+  );
+
+  syncTimer = setInterval(() => {
+    runUnlessIdle("models-dev-sync", () =>
+      launchSync()
+        .then((result) => {
+          if (result.success) {
+            console.log(
+              `[MODELS_DEV] Periodic sync complete: ${result.modelCount} pricing entries`
+            );
+          }
+        })
+        .catch((err) => {
+          console.warn(
+            "[MODELS_DEV] Periodic sync error:",
+            err instanceof Error ? err.message : err
+          );
+        })
+    );
   }, interval);
 
   if (syncTimer && typeof syncTimer === "object" && "unref" in syncTimer) {

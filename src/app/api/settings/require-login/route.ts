@@ -18,6 +18,10 @@ function getNodeCompatibility() {
   return { nodeCompatible };
 }
 
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
 function hasConfiguredPassword(settings: Record<string, unknown>) {
   return hasManagementPasswordConfigured(settings);
 }
@@ -42,6 +46,9 @@ export async function GET() {
       setupComplete,
       oidcEnabled,
       brandCredit,
+      // Public on purpose: the sign-in page shows the custom name and logo to anyone anyway.
+      instanceName: stringOrNull(settings.instanceName),
+      customLogo: stringOrNull(settings.customLogoBase64) || stringOrNull(settings.customLogoUrl),
       ...nodeInfo,
     });
   } catch (error) {
@@ -53,6 +60,8 @@ export async function GET() {
         setupComplete: true,
         oidcEnabled: false,
         brandCredit,
+        instanceName: null,
+        customLogo: null,
         ...nodeInfo,
       },
       { status: 200 }

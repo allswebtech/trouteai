@@ -164,6 +164,30 @@ function responsesFailedFrame(jsonText: string): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
+/**
+ * A JSON error body in the Anthropic error event shape (`{"type":"error","error":{…}}`), which
+ * Anthropic clients read to tell a rate limit from another failure. The status line is already
+ * spent on 200, so a Retry-After header the answer carried goes into the error as `retry_after`.
+ */
+function anthropicErrorData(jsonText: string, retryAfter: string | null): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    return jsonText;
+  }
+  if (!parsed || typeof parsed !== "object") return jsonText;
+  const body = parsed as Record<string, unknown>;
+  const inner = body.error;
+  if (!inner || typeof inner !== "object") return jsonText;
+  const error = { ...(inner as Record<string, unknown>) };
+  const seconds = Number(retryAfter);
+  if (error.retry_after === undefined && retryAfter && Number.isFinite(seconds) && seconds > 0) {
+    error.retry_after = seconds;
+  }
+  return JSON.stringify({ type: "error", ...body, error });
+}
+
 export type EarlyStreamKeepaliveOptions = {
   /** Wait this long for the handler before committing to a keepalive stream. */
   thresholdMs?: number;
@@ -354,7 +378,7 @@ export async function withEarlyStreamKeepalive(
               text.trim() ||
               JSON.stringify({ error: { message: "stream_error", type: "stream_error" } });
             const framed = errorFrameUsesNamedEvent
-              ? `event: error\ndata: ${dataLine}\n\n`
+              ? `event: error\ndata: ${anthropicErrorData(dataLine, response.headers.get("retry-after"))}\n\n`
               : errorFrame === OPENAI_RESPONSES_ERROR_FRAME
                 ? responsesFailedFrame(dataLine)
                 : `data: ${dataLine}\n\n`;

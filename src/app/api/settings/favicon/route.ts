@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSettings } from "@/lib/db/settings";
 import { SAFE_OUTBOUND_FETCH_PRESETS, safeOutboundFetch } from "@/shared/network/safeOutboundFetch";
+import { isAuthenticated } from "@/shared/utils/apiAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +40,7 @@ function defaultFaviconRedirect() {
   return new NextResponse(null, { status: 307, headers: { Location: "/favicon.svg" } });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const settings = await getSettings();
 
@@ -54,6 +55,12 @@ export async function GET() {
       if (match && validateImageData(customFaviconBase64, match[1])) {
         faviconData = customFaviconBase64;
       }
+    } else if (customFaviconUrl && !(await isAuthenticated(request))) {
+      // Signed out, the server does not fetch on the caller's behalf: the browser loads the
+      // icon from its own address.
+      return /^https:\/\/[^\s"'<>]+$/i.test(customFaviconUrl)
+        ? new NextResponse(null, { status: 307, headers: { Location: customFaviconUrl } })
+        : defaultFaviconRedirect();
     } else if (customFaviconUrl) {
       try {
         const response = await safeOutboundFetch(customFaviconUrl, {

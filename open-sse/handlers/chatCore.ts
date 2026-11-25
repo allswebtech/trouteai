@@ -1,6 +1,9 @@
 import { resolveChatCoreRequestSetup } from "./chatCore/requestSetup.ts";
 import { buildFailureUsageRecord } from "./chatCore/failureUsage.ts";
-import { extractSystemRoleMessages } from "./chatCore/claudeSystemRole.ts";
+import {
+  extractSystemRoleMessages,
+  keepsMidConversationSystem,
+} from "./chatCore/claudeSystemRole.ts";
 export { extractSystemRoleMessages } from "./chatCore/claudeSystemRole.ts";
 import { checkIdempotencyCache } from "./chatCore/idempotency.ts";
 import { checkSemanticCache } from "./chatCore/semanticCache.ts";
@@ -111,10 +114,15 @@ import { applyResponsesPreviousResponseIdPolicy } from "../utils/responsesStateP
 import { applyClaudeEffortVariant } from "./chatCore/claudeEffortVariant.ts";
 import { DEFAULT_THINKING_CLAUDE_SIGNATURE } from "../config/defaultThinkingSignature.ts";
 import {
+  findUnsupportedContentKinds,
   getStripTypesForProviderModel,
-  stripIncompatibleMessageContent,
+  unsupportedContentMessage,
 } from "../services/modelStrip.ts";
-import { resolveModelAlias } from "../services/modelDeprecation.ts";
+import { resolveModelAliasWithKind } from "../services/modelDeprecation.ts";
+import {
+  combineAnswerFallbackFacts,
+  getAnswerFallbackFacts,
+} from "../services/answerFallbackContext.ts";
 import { normalizeMimoThinking } from "../services/mimoThinking.ts";
 import {
   isOpencodeGoProvider,
@@ -145,6 +153,7 @@ import {
   buildErrorBody,
   createErrorResult,
   parseUpstreamError,
+  planUsageHeaders,
   formatProviderError,
   sanitizeErrorMessage,
 } from "../utils/error.ts";
@@ -153,10 +162,7 @@ import {
   detectMalformedNonStream,
   describeMalformedNonStream,
 } from "../utils/diagnostics.ts";
-import {
-  checkTokenLimits,
-  recordTokenUsage,
-} from "@trouteai/open-sse/services/tokenLimitCounter.ts";
+import { checkTokenLimits, recordTokenUsage } from "@trouteai/open-sse/services/tokenLimitCounter.ts";
 import {
   COOLDOWN_MS,
   HTTP_STATUS,
@@ -313,6 +319,7 @@ import {
   isModelUnavailableError,
   getNextFamilyFallback,
   isContextOverflowError,
+  isModelFamilyFallbackEnabled,
   findLargerContextModel,
   getModelFamily,
 } from "../services/modelFamilyFallback.ts";
@@ -374,6 +381,12 @@ import {
 
 import { isSmallEnoughForSemanticCache } from "../utils/estimateSize.ts";
 import { kiroRefusalFallbackModel } from "../executors/kiro.ts";
+import {
+  ImageInputError,
+  inlineRemoteImages,
+  modelCannotSeeMessage,
+  requestHasImageInput,
+} from "../utils/imageInput.ts";
 
 /**
  * Core chat handler - shared between SSE and Worker
@@ -441,6 +454,26 @@ export async function handleChatCore({
     body,
     model
   );
+  // The model string the client sent. `body.model` is already the routed `provider/model`
+  // here (inside a combo: the step), so the client's own string comes from the raw request.
+  const rawClientModel = (clientRawRequest as { body?: { model?: unknown } } | null)?.body?.model;
+  const clientModel =
+    typeof rawClientModel === "string" && rawClientModel.trim() ? rawClientModel : requestedModel;
+  // Why this answer may not come from the model that was asked for (X-TRouteAI-Fallback), how
+  // many failed attempts came before it, and the model that answered when a step of this
+  // handler changed it.
+  const answerFallbacks: string[] = [];
+  let answerFallbackAttempts = 0;
+  // Facts of the layers around this attempt (combo step, global, emergency), read now because
+  // stream callbacks run outside the request store. Headers get them from those layers; the
+  // log row and the end-of-stream metadata get them from here.
+  const outerAnswerFallback = getAnswerFallbackFacts();
+  const currentAnswerFallback = () =>
+    combineAnswerFallbackFacts(
+      { fallback: answerFallbacks.join(", "), attempts: answerFallbackAttempts },
+      outerAnswerFallback
+    );
+  let answeringModelOverride = "";
   const isModelScope = () => isModelScopeProvider(provider, credentials?.providerSpecificData);
   const startTime = Date.now();
   // Per-request trace id + checkpoint helper. Lets us see exactly which await
@@ -611,10 +644,20 @@ export async function handleChatCore({
   // ── Phase 9.2: Idempotency check ──
   // Resolve the idempotency key once here and reuse it at the Phase 9.2 save site below,
   // rather than re-deriving it. (#3821-review LEDGER-6)
+  // A replay answers under the client's own name too; the settings are cached, read once here.
+  const idempotencyEchoSettings = cachedSettings ?? (await getCachedSettings());
+  const idempotencyEchoModel =
+    idempotencyEchoSettings?.echoRequestedModelName !== false &&
+    typeof clientModel === "string" &&
+    clientModel
+      ? clientModel
+      : null;
   const { hit: idempotencyHit, idempotencyKey } = await checkIdempotencyCache({
     clientRawRequest,
     provider,
     model,
+    echoModel: idempotencyEchoModel,
+    requestedModel: typeof clientModel === "string" ? clientModel : null,
     // NEXA fusion-idempotency fix: body.messages feeds the key digest so combo-internal
     // sub-requests (fusion panel + judge re-enter chatCore sharing the client's headers)
     // can never collide on the raw Idempotency-Key/x-request-id header key.
@@ -700,6 +743,7 @@ export async function handleChatCore({
       `Background task redirect (${bgRedirect.reason}): ${originalModel} → ${bgRedirect.degradedModel}`
     );
     model = bgRedirect.degradedModel;
+    answerFallbacks.push("background");
     if (body && typeof body === "object") {
       body.model = model;
     }
@@ -720,11 +764,14 @@ export async function handleChatCore({
   // Custom aliases take priority over built-in and must be resolved here so the
   // downstream getModelTargetFormat() lookup AND the actual provider request use
   // the correct, aliased model ID. Without this, aliases only affect format detection.
-  const resolvedModel = resolveModelAlias(model);
+  const { model: resolvedModel, kind: aliasKind } = resolveModelAliasWithKind(model);
   // Use resolvedModel for all downstream operations (routing, provider requests, logging)
   let effectiveModel = resolvedModel === model ? model : resolvedModel;
   if (resolvedModel !== model) {
     log?.info?.("ALIAS", `Model alias applied: ${model} → ${resolvedModel}`);
+    // another spelling of the same model is not a fallback; a user alias or a successor is
+    if (aliasKind !== "spelling") answerFallbacks.push("alias");
+    answeringModelOverride = resolvedModel;
   }
 
   // Effort-variant model ids: the Claude / Claude-Code model picker (e.g. VS Code's
@@ -829,6 +876,8 @@ export async function handleChatCore({
   const noLogEnabled = apiKeyInfo?.noLog === true;
   // Consolidate settings reads — fetch once, reuse throughout the request
   const settings = cachedSettings ?? (await getCachedSettings());
+  // Another model of the family answers only when the user turned that on.
+  const familyFallbackOn = isModelFamilyFallbackEnabled(settings);
   // Opt-in tool-source diagnostics: summarize the request's tool definitions
   // (count + MCP/hosted/client source breakdown + first names) as a single debug line.
   if (settings.logToolSources === true) {
@@ -846,11 +895,13 @@ export async function handleChatCore({
   const isCodexResponsesEcho =
     (isResponsesEndpoint || sourceFormat === FORMATS.OPENAI_RESPONSES) &&
     isCodexOriginatedHeaders(clientRawRequest?.headers);
+  // On by default: the answer's `model` is the string the client sent. The setting set to
+  // false gives the answering model's id instead (Codex on the Responses API keeps the echo).
   const echoModel =
-    (settings.echoRequestedModelName === true || isCodexResponsesEcho) &&
-    typeof requestedModel === "string" &&
-    requestedModel
-      ? requestedModel
+    (settings.echoRequestedModelName !== false || isCodexResponsesEcho) &&
+    typeof clientModel === "string" &&
+    clientModel
+      ? clientModel
       : null;
   const detailedLoggingEnabled =
     !noLogEnabled &&
@@ -877,10 +928,8 @@ export async function handleChatCore({
   const explicitSessionIdHeader =
     (clientRawRequest?.headers && typeof clientRawRequest.headers.get === "function"
       ? clientRawRequest.headers.get("x-trouteai-session-id")
-      : getHeaderValueCaseInsensitive(
-          clientRawRequest?.headers ?? null,
-          "x-trouteai-session-id"
-        )) || null;
+      : getHeaderValueCaseInsensitive(clientRawRequest?.headers ?? null, "x-trouteai-session-id")) ||
+    null;
   const pipelineSessionId = explicitSessionIdHeader || skillRequestId;
   // persistAttemptLogs extracted to chatCore/attemptLogging.ts; bind the per-request context
   // once so the 16 call sites keep passing only the per-attempt args (byte-identical).
@@ -895,7 +944,7 @@ export async function handleChatCore({
       reqLogger,
       pendingRequestId,
       clientRawRequest,
-      requestedModel,
+      requestedModel: clientModel,
       credentials,
       startTime,
       body,
@@ -910,6 +959,7 @@ export async function handleChatCore({
       correlationId,
       modelPinned,
       sessionTag: explicitSessionIdHeader,
+      answerFallback: currentAnswerFallback,
     });
 
   // Primary path: merge client model id + alias target so config on either key applies; resolved
@@ -936,11 +986,6 @@ export async function handleChatCore({
       settings,
     });
 
-  // Default to false unless client explicitly sets stream: true (OpenAI spec compliant)
-  const acceptHeader =
-    clientRawRequest?.headers && typeof clientRawRequest.headers.get === "function"
-      ? clientRawRequest.headers.get("accept") || clientRawRequest.headers.get("Accept")
-      : clientRawRequest?.headers?.["accept"] || clientRawRequest?.headers?.["Accept"];
   const streamUserAgent = [
     typeof userAgent === "string" ? userAgent : "",
     getHeaderValueCaseInsensitive(clientRawRequest?.headers ?? null, "user-agent") || "",
@@ -973,29 +1018,15 @@ export async function handleChatCore({
     delete b.streaming;
   }
 
-  // Codex /responses/compact is JSON-only: Codex CLI does not send stream=false,
-  // so route shape must override the usual Accept/header fallback.
-  // sourceFormat="claude" applies the Anthropic Messages spec default (stream=false
-  // when body omits stream), preventing STREAM_EARLY_EOF on /v1/messages when
-  // clients send Accept: */* without an explicit stream flag.
-  // providerRequiresStreaming: providers with forceStream:true (cline/clinepass)
-  // only implement upstream streaming — a non-streaming request returns
-  // "generateText is not implemented" / an empty body. This flag forces the
-  // UPSTREAM request to stream (see `upstreamStream` below), but it MUST NOT
-  // force the client-facing `stream` flag: a stream:false client (e.g. the
-  // model-test button, plain JSON API callers) still expects a JSON response.
-  // The client-side `if (!stream)` branch drains the forced upstream SSE and
-  // converts it back to JSON via readNonStreamingResponseBody. Passing this
-  // flag into resolveStreamFlag would force `stream=true` and skip that
-  // conversion, yielding STREAM_EARLY_EOF for JSON callers.
+  // Codex /responses/compact is JSON-only whatever the body says. Everywhere else the
+  // body's `stream` field alone decides (see resolveStreamFlag). Stream-only providers
+  // (forceStream) still get a streamed upstream request (`upstreamStream` below); a JSON
+  // client is answered by draining that stream into one JSON body.
   const providerRequiresStreaming = REGISTRY[provider]?.forceStream === true;
   const stream =
     nativeCodexPassthrough && isCompactResponsesEndpoint(endpointPath)
       ? false
-      : resolveStreamFlag(body?.stream, acceptHeader, sourceFormat, {
-          userAgent: streamUserAgent,
-          streamDefaultMode: apiKeyInfo?.streamDefaultMode,
-        });
+      : resolveStreamFlag(body?.stream);
 
   // `settings` is already consolidated once near the top of handleChatCore
   // (the "fetch once, reuse" const). A second `const settings` here was a
@@ -1055,6 +1086,8 @@ export async function handleChatCore({
     log,
     persistAttemptLogs,
     apiKeyId: apiKeyInfo?.id ?? undefined,
+    echoModel,
+    requestedModel: typeof clientModel === "string" ? clientModel : null,
   });
   if (cacheHit) {
     return cacheHit;
@@ -1930,6 +1963,35 @@ export async function handleChatCore({
   }
   body = outputBudget.body;
 
+  // Images: a model whose capability data says it cannot see is refused by name before anything
+  // is sent (a combo already skips such targets); for Kiro, which takes inline bytes only, images
+  // given by URL are downloaded here (public addresses only, size and count limits).
+  if (requestHasImageInput(body)) {
+    const imageModelLabel = provider ? `${provider}/${effectiveModel}` : String(effectiveModel);
+    if (
+      getResolvedModelCapabilities({ provider, model: effectiveModel }).supportsVision === false
+    ) {
+      trackPendingRequest(model, provider, connectionId, false);
+      return createErrorResult(
+        400,
+        modelCannotSeeMessage(imageModelLabel),
+        null,
+        "model_not_vision_capable",
+        "invalid_request_error"
+      );
+    }
+    if (targetFormat === FORMATS.KIRO) {
+      try {
+        body = await inlineRemoteImages(body, clientRawRequest?.signal ?? null);
+      } catch (error) {
+        trackPendingRequest(model, provider, connectionId, false);
+        const message =
+          error instanceof ImageInputError ? error.message : "An image URL could not be fetched.";
+        return createErrorResult(400, message, null, "invalid_image", "invalid_request_error");
+      }
+    }
+  }
+
   let translatedBody = body;
   const isClaudePassthrough = sourceFormat === FORMATS.CLAUDE && targetFormat === FORMATS.CLAUDE;
   const isClaudeCodeCompatible = isClaudeCodeCompatibleProvider(provider);
@@ -1950,16 +2012,19 @@ export async function handleChatCore({
   let ccSessionId: string | null = null;
   const stripTypes = getStripTypesForProviderModel(provider || "", model || "");
 
+  // A model whose registry entry lists content it cannot take (`strip`) is refused by name, as
+  // the vision rule above does: dropping the content would answer a question the model was
+  // never shown in full.
   if (Array.isArray(translatedBody?.messages) && stripTypes.length > 0) {
-    const stripResult = stripIncompatibleMessageContent(translatedBody.messages, stripTypes);
-    if (stripResult.removedParts > 0) {
-      translatedBody = {
-        ...translatedBody,
-        messages: stripResult.messages,
-      };
-      log?.warn?.(
-        "CONTENT",
-        `Stripped ${stripResult.removedParts} incompatible content part(s) for ${provider}/${model}`
+    const kinds = findUnsupportedContentKinds(translatedBody.messages, stripTypes);
+    if (kinds.length > 0) {
+      trackPendingRequest(model, provider, connectionId, false);
+      return createErrorResult(
+        400,
+        unsupportedContentMessage(provider ? `${provider}/${model}` : String(model), kinds),
+        null,
+        "model_content_not_supported",
+        "invalid_request_error"
       );
     }
   }
@@ -1990,7 +2055,15 @@ export async function handleChatCore({
   const normalizeClaudeUpstreamMessages = (
     payload: Record<string, unknown>,
     options?: { preserveToolResultBlocks?: boolean }
-  ) => normalizeClaudeUpstreamMessagesFor(payload, options, log);
+  ) =>
+    normalizeClaudeUpstreamMessagesFor(
+      payload,
+      {
+        ...options,
+        keepMidConversationSystem: keepsMidConversationSystem(provider, effectiveModel),
+      },
+      log
+    );
 
   try {
     if (nativeCodexPassthrough) {
@@ -2092,7 +2165,9 @@ export async function handleChatCore({
       if (isClaudeCodeSemanticPassthrough) {
         // Only lift system/developer messages — preserves Claude Code's
         // native payload structure (documents, tool chains, thinking, etc.)
-        extractSystemRoleMessages(translatedBody);
+        extractSystemRoleMessages(translatedBody, {
+          keepMidConversation: keepsMidConversationSystem(provider, effectiveModel),
+        });
         if (Array.isArray(translatedBody.messages)) {
           translatedBody.messages = splitMisplacedToolResults(
             translatedBody.messages as ClaudeMessage[]
@@ -2337,7 +2412,7 @@ export async function handleChatCore({
   // which claude-fable-5 (adaptive-only) rejects with a 400. Drop the now-invalid value
   // when the resolved target model rejects it; models that accept `disabled` are untouched.
   if (typeof finalModelToUpstream === "string") {
-    translatedBody = normalizeThinkingForModel(translatedBody, finalModelToUpstream);
+    translatedBody = normalizeThinkingForModel(translatedBody, finalModelToUpstream, provider);
     // Claude Opus 4.7+/Fable 5 removed manual extended thinking: `thinking.type:"enabled"`
     // or any `thinking.budget_tokens` is a hard 400. Collapse any manual thinking that
     // reached this point (passthrough legacy shape, reasoning_effort buckets, per-model
@@ -3861,7 +3936,7 @@ export async function handleChatCore({
     // from the same family. This keeps the request alive on the same account
     // instead of failing the entire combo.
     if (isModelUnavailableError(statusCode, message)) {
-      const nextModel = getNextFamilyFallback(currentModel, triedModels);
+      const nextModel = familyFallbackOn ? getNextFamilyFallback(currentModel, triedModels) : null;
       if (nextModel) {
         triedModels.add(nextModel);
         currentModel = nextModel;
@@ -3883,6 +3958,9 @@ export async function handleChatCore({
             });
             // Continue processing with the fallback response — skip error return
             log?.info?.("MODEL_FALLBACK", `Serving ${nextModel} as fallback for ${model}`);
+            answerFallbacks.push("family");
+            answerFallbackAttempts++;
+            answeringModelOverride = nextModel;
             // Jump to streaming/non-streaming handling below
             // We fall through by NOT returning here
           } else {
@@ -3903,7 +3981,10 @@ export async function handleChatCore({
               upstreamErrorCode,
               upstreamErrorType,
               upstreamErrorBody,
-              { passthrough: sourceFormat === FORMATS.CLAUDE }
+              {
+                passthrough: sourceFormat === FORMATS.CLAUDE,
+                upstreamHeaders: providerResponse.headers,
+              }
             );
           }
         } catch {
@@ -3923,7 +4004,10 @@ export async function handleChatCore({
             upstreamErrorCode,
             upstreamErrorType,
             upstreamErrorBody,
-            { passthrough: sourceFormat === FORMATS.CLAUDE }
+            {
+              passthrough: sourceFormat === FORMATS.CLAUDE,
+              upstreamHeaders: providerResponse.headers,
+            }
           );
         }
       } else {
@@ -3943,16 +4027,20 @@ export async function handleChatCore({
           upstreamErrorCode,
           upstreamErrorType,
           upstreamErrorBody,
-          { passthrough: sourceFormat === FORMATS.CLAUDE }
+          {
+            passthrough: sourceFormat === FORMATS.CLAUDE,
+            upstreamHeaders: providerResponse.headers,
+          }
         );
       }
     } else if (isContextOverflowError(statusCode, message)) {
       const familyCandidates = getModelFamily(currentModel).filter(
         (m) => m !== currentModel && !triedModels.has(m)
       );
-      const nextModel =
-        findLargerContextModel(currentModel, familyCandidates) ??
-        getNextFamilyFallback(currentModel, triedModels);
+      const nextModel = familyFallbackOn
+        ? (findLargerContextModel(currentModel, familyCandidates) ??
+          getNextFamilyFallback(currentModel, triedModels))
+        : null;
       if (nextModel) {
         triedModels.add(nextModel);
         currentModel = nextModel;
@@ -3975,6 +4063,9 @@ export async function handleChatCore({
               "CONTEXT_OVERFLOW_FALLBACK",
               `Serving ${nextModel} as fallback for ${model}`
             );
+            answerFallbacks.push("context-overflow");
+            answerFallbackAttempts++;
+            answeringModelOverride = nextModel;
           } else {
             persistAttemptLogs({
               status: statusCode,
@@ -3992,7 +4083,10 @@ export async function handleChatCore({
               upstreamErrorCode,
               upstreamErrorType,
               upstreamErrorBody,
-              { passthrough: sourceFormat === FORMATS.CLAUDE }
+              {
+                passthrough: sourceFormat === FORMATS.CLAUDE,
+                upstreamHeaders: providerResponse.headers,
+              }
             );
           }
         } catch {
@@ -4012,7 +4106,10 @@ export async function handleChatCore({
             upstreamErrorCode,
             upstreamErrorType,
             upstreamErrorBody,
-            { passthrough: sourceFormat === FORMATS.CLAUDE }
+            {
+              passthrough: sourceFormat === FORMATS.CLAUDE,
+              upstreamHeaders: providerResponse.headers,
+            }
           );
         }
       } else {
@@ -4032,7 +4129,10 @@ export async function handleChatCore({
           upstreamErrorCode,
           upstreamErrorType,
           upstreamErrorBody,
-          { passthrough: sourceFormat === FORMATS.CLAUDE }
+          {
+            passthrough: sourceFormat === FORMATS.CLAUDE,
+            upstreamHeaders: providerResponse.headers,
+          }
         );
       }
     } else {
@@ -4059,7 +4159,7 @@ export async function handleChatCore({
         upstreamErrorCode,
         upstreamErrorType,
         upstreamErrorBody,
-        { passthrough: sourceFormat === FORMATS.CLAUDE }
+        { passthrough: sourceFormat === FORMATS.CLAUDE, upstreamHeaders: providerResponse.headers }
       );
     }
     // ── End T5 ───────────────────────────────────────────────────────────────
@@ -4204,7 +4304,7 @@ export async function handleChatCore({
       persistFailureUsage(HTTP_STATUS.BAD_GATEWAY, "empty_content");
 
       // Trigger non-recursive fallback for empty content
-      const nextModel = getNextFamilyFallback(currentModel, triedModels);
+      const nextModel = familyFallbackOn ? getNextFamilyFallback(currentModel, triedModels) : null;
       if (nextModel) {
         triedModels.add(nextModel);
         currentModel = nextModel;
@@ -4227,6 +4327,9 @@ export async function handleChatCore({
                 "EMPTY_CONTENT_FALLBACK",
                 `Serving ${nextModel} as fallback for ${model}`
               );
+              answerFallbacks.push("empty-content");
+              answerFallbackAttempts++;
+              answeringModelOverride = nextModel;
               // Fall through — continue processing with the new responseBody
             } catch {
               trackPendingRequest(model, provider, connectionId, false);
@@ -4617,24 +4720,35 @@ export async function handleChatCore({
       respondedModel === kiroRefusalFallbackModel(String(model || ""))
         ? respondedModel
         : "";
-    const responseHeaders = buildNonStreamingResponseHeaders({
-      provider,
-      model: answeredByFallback || model,
-      startTime,
-      responseUsage,
-      estimatedCost,
-      requestId: skillRequestId,
-      compressionResponseMeta,
-      comboStrategy,
-    });
+    if (answeredByFallback) {
+      answerFallbacks.push("refusal");
+      answerFallbackAttempts++;
+    }
+    const answeringModel = answeredByFallback || answeringModelOverride || model;
+    const responseHeaders = {
+      // the account's plan usage, as the provider sent it (streamed answers forward it too)
+      ...planUsageHeaders(providerResponse?.headers, 200),
+      ...buildNonStreamingResponseHeaders({
+        provider,
+        model: answeringModel,
+        requestedModel: clientModel,
+        fallback: answerFallbacks.join(", "),
+        fallbackAttempts: answerFallbackAttempts,
+        startTime,
+        responseUsage,
+        estimatedCost,
+        requestId: skillRequestId,
+        compressionResponseMeta,
+        comboStrategy,
+      }),
+    };
     // Align response body `model` with the `X-TRouteAI-Model` header
     // (both must be the resolved backend model). Some upstreams (notably legacy
     // /v1/completions text-completion path) return a body `model` field that
     // differs from the resolved backend id we advertised in the header, leaving
     // strict clients unable to reconcile the two. Rewrite body.model to `model`
-    // FIRST, then let the model-name echo override it when the opt-in setting is on.
-    if (typeof model === "string" && model)
-      echoModelInObject(translatedResponse, answeredByFallback || model);
+    // FIRST, then let the model-name echo (on by default) override it.
+    if (typeof model === "string" && model) echoModelInObject(translatedResponse, answeringModel);
     // Echo the requested alias/combo name in the non-streaming response model.
     if (echoModel) echoModelInObject(translatedResponse, echoModel);
 
@@ -4670,10 +4784,13 @@ export async function handleChatCore({
   // that answers in an internal header (x-trouteai-* headers are never forwarded).
   const kiroAnsweringModel =
     provider === "kiro" ? providerResponse.headers?.get?.("x-trouteai-answering-model") || "" : "";
-  const streamingHeaderModel =
-    kiroAnsweringModel && kiroAnsweringModel === kiroRefusalFallbackModel(String(model || ""))
-      ? kiroAnsweringModel
-      : model;
+  const kiroRefused =
+    !!kiroAnsweringModel && kiroAnsweringModel === kiroRefusalFallbackModel(String(model || ""));
+  if (kiroRefused) {
+    answerFallbacks.push("refusal");
+    answerFallbackAttempts++;
+  }
+  const streamingHeaderModel = kiroRefused ? kiroAnsweringModel : answeringModelOverride || model;
   const streamReadinessPolicy = resolveStreamReadinessTimeout({
     baseTimeoutMs: STREAM_READINESS_TIMEOUT_MS,
     provider,
@@ -4743,10 +4860,25 @@ export async function handleChatCore({
     providerHeaders: providerResponse.headers,
     provider,
     model: streamingHeaderModel,
+    requestedModel: clientModel,
+    fallback: answerFallbacks.join(", "),
+    fallbackAttempts: answerFallbackAttempts,
     pendingRequestId,
     compressionResponseMeta,
     comboStrategy,
   });
+
+  // The end-of-stream metadata names the same facts as the headers (they cannot reach a client
+  // whose 200 the early keep-alive already sent), read at the end of the stream.
+  const streamRoutingFacts = () => {
+    const facts = currentAnswerFallback();
+    return {
+      requestedModel: typeof clientModel === "string" ? clientModel : null,
+      model: streamingHeaderModel,
+      fallback: facts.fallback,
+      fallbackAttempts: facts.attempts,
+    };
+  };
 
   // Create transform stream with logger for streaming response
   let transformStream;
@@ -4957,7 +5089,11 @@ export async function handleChatCore({
       // openai-responses → openai translation still wants the namespace identity
       // map for #7936-style round-trip closure when the client also speaks
       // Responses (Codex CLI).
-      requestToolIdentityMap
+      requestToolIdentityMap,
+      // the slots before the routing facts keep their defaults, as before
+      undefined,
+      undefined,
+      streamRoutingFacts
     );
   } else if (needsTranslation(targetFormat, clientResponseFormat)) {
     // Standard translation for other providers
@@ -4987,7 +5123,8 @@ export async function handleChatCore({
         clientResponseFormat,
       }),
       customToolNames,
-      requestToolIdentityMap
+      requestToolIdentityMap,
+      streamRoutingFacts
     );
   } else {
     log?.debug?.("STREAM", `Standard passthrough mode`);
@@ -5002,7 +5139,8 @@ export async function handleChatCore({
       apiKeyInfo,
       handleStreamFailure,
       clientResponseFormat,
-      requestToolIdentityMap
+      requestToolIdentityMap,
+      streamRoutingFacts
     );
   }
 

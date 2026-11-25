@@ -174,7 +174,7 @@ export async function getConsistentMachineId(salt = null) {
     return hashedMachineId.substring(0, 16);
   } catch (error) {
     console.log("Error getting machine ID:", error);
-    // Fallback to random ID if node-machine-id fails
+    // Fall back to a random ID if the machine id cannot be read
     return getRandomMachineFallbackId();
   }
 }
@@ -188,7 +188,7 @@ export async function getRawMachineId() {
     return getMachineIdRaw();
   } catch (error) {
     console.log("Error getting raw machine ID:", error);
-    // Fallback to random ID if node-machine-id fails
+    // Fall back to a random ID if the machine id cannot be read
     return getRandomMachineFallbackId();
   }
 }

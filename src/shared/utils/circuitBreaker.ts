@@ -24,6 +24,7 @@ import {
   deleteAllCircuitBreakerStates,
 } from "../../lib/db/domainState";
 import type { FailureKind } from "./classify429";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 /**
  * Detect a LOCAL stream-lifecycle error that must NOT count as a
@@ -500,25 +501,28 @@ export function __getCircuitRegistrySizeForTests(): number {
   return registry.size;
 }
 
-const _registrySweep = setInterval(() => {
-  const now = Date.now();
-  for (const [name, breaker] of registry) {
-    const status = breaker.getStatus();
-    if (
-      status.state === STATE.CLOSED &&
-      status.failureCount === 0 &&
-      (!status.lastFailureTime || now - status.lastFailureTime > 30 * 60 * 1000)
-    ) {
-      registry.delete(name);
-      try {
-        deleteCircuitBreakerState(name);
-      } catch {}
+// Pauses while the server is idle: entries are only added by requests, and the next request
+// runs the sweep again.
+setIdleAwareInterval(
+  "circuitBreaker-sweep",
+  () => {
+    const now = Date.now();
+    for (const [name, breaker] of registry) {
+      const status = breaker.getStatus();
+      if (
+        status.state === STATE.CLOSED &&
+        status.failureCount === 0 &&
+        (!status.lastFailureTime || now - status.lastFailureTime > 30 * 60 * 1000)
+      ) {
+        registry.delete(name);
+        try {
+          deleteCircuitBreakerState(name);
+        } catch {}
+      }
     }
-  }
-}, 5 * 60_000);
-if (typeof _registrySweep === "object" && "unref" in _registrySweep) {
-  (_registrySweep as { unref?: () => void }).unref?.();
-}
+  },
+  5 * 60_000
+);
 
 /**
  * Enforce MAX_REGISTRY_SIZE before inserting a new breaker. The cap was previously declared

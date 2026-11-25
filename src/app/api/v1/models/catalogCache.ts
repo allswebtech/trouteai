@@ -196,12 +196,15 @@ function runBuilder(
 export async function resolveCachedCatalogResponse(
   request: Request,
   headerSources: { corsHeaders: Record<string, string>; diagnosticHeaders: Record<string, string> },
-  buildPayload: (request: Request) => Promise<CatalogPayload>
+  buildPayload: (request: Request) => Promise<CatalogPayload>,
+  keyVariant = ""
 ): Promise<Response> {
   const { corsHeaders, diagnosticHeaders } = headerSources;
   dropCatalogCacheIfStateChanged();
 
-  const cacheKey = buildCatalogCacheKey(request);
+  // keyVariant carries what else shapes the body (the routable-only rule, the list shape
+  // and its paging), so a dashboard list and a client list never share an entry.
+  const cacheKey = `${buildCatalogCacheKey(request)}|${keyVariant}`;
   const now = Date.now();
   const cached = catalogCache.get(cacheKey);
 

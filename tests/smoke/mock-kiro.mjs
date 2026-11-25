@@ -81,6 +81,7 @@ const exception = (type, message) =>
 // EventStream exception), MOCK-CUTOFF (text, then the stream ends with no closing frames),
 // MOCK-EXCEPTION-FIRST (an exception before any content).
 const failSeen = new Map();
+const received = [];
 function failureScript(all) {
   const m = /MOCK-(MIDSTREAM-EXCEPTION|CUTOFF|EXCEPTION-FIRST)(?:-([A-Za-z0-9]+))?/.exec(all);
   if (!m) return null;
@@ -123,6 +124,9 @@ function answer(body) {
     body.additionalModelRequestFields.thinking.display !== "omitted";
   const failure = failureScript(current.content || "");
   if (failure) return failure;
+  // Image requests (vision-e2e.mjs): say how many images arrived.
+  if (Array.isArray(current.images) && current.images.length > 0)
+    return [...textFrames(`I see ${current.images.length} image`), ...end("END_TURN")];
 
   if (/weather in Paris/.test(all)) {
     if (/Sunny, 21/.test(resultText))
@@ -174,7 +178,15 @@ http
       try {
         body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
       } catch {}
+      // What each request carried: its model and the images on its current message.
+      if (req.method === "GET" && req.url === "/__received") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(received));
+        return;
+      }
       if (req.method === "POST" && req.url?.startsWith("/generateAssistantResponse")) {
+        const msg = body.conversationState?.currentMessage?.userInputMessage || {};
+        received.push({ modelId: msg.modelId || "", images: msg.images || [] });
         const history = body.conversationState?.history || [];
         const foreign = history.some((h) => {
           const sig = h.assistantResponseMessage?.reasoningContent?.reasoningText?.signature;

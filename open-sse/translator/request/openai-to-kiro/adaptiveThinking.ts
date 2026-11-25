@@ -73,6 +73,9 @@ export function resolveKiroModelAlias(model: unknown): {
 
   const thinking = upstream.endsWith("-thinking");
   if (thinking) upstream = upstream.slice(0, -"-thinking".length);
+  // A dated Claude id (claude-haiku-4-5-20251001) names the same model as its base id, and Kiro
+  // knows only the base. Claude ids only: another model's name can end in eight digits.
+  if (/^claude-/i.test(upstream)) upstream = upstream.replace(/-\d{8}$/, "");
   upstream = upstream.replace(/^(claude-(?:opus|sonnet|haiku|3-\d+)-\d+)-(\d{1,2})$/, "$1.$2");
 
   if (thinking && !supportsKiroAdaptiveThinking(upstream)) {

@@ -1,4 +1,5 @@
 import { batchSaveCostEntries } from "@/lib/db/domainState";
+import { isIdle } from "@/lib/idleState";
 
 export interface BufferedCostEntry {
   apiKeyId: string;
@@ -64,6 +65,13 @@ export class SpendBatchWriter {
     if (this.started) return;
     this.started = true;
     this.timer = setInterval(() => {
+      // Nothing to write and nobody using the server: stop; the next increment() starts again.
+      if (this.buffer.length === 0 && !this.flushPromise && isIdle()) {
+        if (this.timer) clearInterval(this.timer);
+        this.timer = null;
+        this.started = false;
+        return;
+      }
       void this.flush();
     }, this.flushIntervalMs);
     this.timer.unref?.();

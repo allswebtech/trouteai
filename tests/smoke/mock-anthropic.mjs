@@ -6,8 +6,13 @@
 //                            overflow-kiro | overflow-openai | overflow-openai-completion |
 //                            overflow-anthropic (a provider's own "context too long" 400) |
 //                            overflow-kiro-slow (the same after 3.5 s, past the keepalive
-//                            threshold) | responses-overflow (POST /v1/responses: a 200 stream
+//                            threshold) | limit-slow (the usage-limit 429 with retry-after,
+//                            after 3 s) | slow (a normal answer after 3 s) | responses-overflow (POST /v1/responses: a 200 stream
 //                            that fails with context_length_exceeded after response.created)
+//   POST /__control          {key, model, mode}: the mode for that one model id only, the
+//                            account's own mode for every other id. Extra mode here:
+//                            missing (a 404 not_found_error naming the model); the overflow
+//                            and error modes (unavailable, billing, ...) work per model too
 //   GET  /__stats            {hits: {<key>: n}, models: {<key>: [model,...]},
 //                            last: {<key>: {bytes, tail}}}  (tail: the body still ends with
 //                            the TAIL-MARKER the context test puts in a long tool result)
@@ -56,6 +61,15 @@ const OVERFLOW_BODIES = {
       message: "prompt is too long: 1022310 tokens > 1000000 maximum",
     },
   },
+};
+
+// mode -> [status, Anthropic error type, message]
+const ERROR_MODES = {
+  overloaded: [529, "overloaded_error", "Overloaded"],
+  unavailable: [503, "api_error", "Service unavailable, try again later"],
+  billing: [402, "billing_error", "Your credit balance is too low to access the API."],
+  badkey: [401, "authentication_error", "invalid x-api-key"],
+  badrequest: [400, "invalid_request_error", "max_tokens: field required"],
 };
 
 const nowSec = () => Math.floor(Date.now() / 1000);
@@ -127,6 +141,11 @@ http
       // keep defaults
     }
 
+    if (req.url === "/__control" && req.method === "POST" && parsed.model) {
+      const acc = account(parsed.key);
+      (acc.modelModes ||= {})[parsed.model] = parsed.mode || "ok";
+      return json(res, 200, { ok: true, key: parsed.key, modelModes: acc.modelModes });
+    }
     if (req.url === "/__control" && req.method === "POST") {
       const acc = account(parsed.key);
       acc.mode = parsed.mode || "ok";
@@ -160,6 +179,20 @@ http
     (models[key] ||= []).push(model);
     last[key] = { bytes: body.length, tail: body.includes("TAIL-MARKER") };
     const acc = account(key);
+    const modelMode = acc.modelModes?.[model];
+    if (modelMode === "missing") {
+      return json(res, 404, {
+        type: "error",
+        error: { type: "not_found_error", message: `model: ${model} not found` },
+      });
+    }
+    if (modelMode && OVERFLOW_BODIES[modelMode]) {
+      return json(res, 400, OVERFLOW_BODIES[modelMode]);
+    }
+    if (modelMode && ERROR_MODES[modelMode]) {
+      const [status, type, message] = ERROR_MODES[modelMode];
+      return json(res, status, { type: "error", error: { type, message } });
+    }
 
     if (req.url.endsWith("/responses")) {
       // OpenAI Responses API upstream (openai-compatible node, apiType "responses")
@@ -209,12 +242,46 @@ http
         })
       );
     }
+    if (acc.mode === "limit-slow" || acc.mode === "slow") {
+      // past the 2 s early keepalive threshold, so a wrapped answer is already a 200
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    if (acc.mode === "limit-slow") {
+      return json(
+        res,
+        429,
+        {
+          type: "error",
+          error: {
+            type: "rate_limit_error",
+            message: "This request would exceed your account's rate limit. Please try again later.",
+          },
+        },
+        rateHeaders(acc, true)
+      );
+    }
     if (acc.mode === "overflow-kiro-slow") {
       await new Promise((r) => setTimeout(r, 3500));
       return json(res, 400, OVERFLOW_BODIES["overflow-kiro"]);
     }
     if (OVERFLOW_BODIES[acc.mode]) {
       return json(res, 400, OVERFLOW_BODIES[acc.mode]);
+    }
+    if (ERROR_MODES[acc.mode]) {
+      const [status, type, message] = ERROR_MODES[acc.mode];
+      return json(res, status, { type: "error", error: { type, message } });
+    }
+    if (acc.mode === "badgateway") {
+      res.writeHead(502, { "content-type": "text/html" });
+      return res.end("<html><body><h1>502 Bad Gateway</h1></body></html>");
+    }
+    if (acc.mode === "close") {
+      req.socket.destroy();
+      return;
+    }
+    if (acc.mode === "hang") {
+      // never answer; the gateway's own time-out has to end the request
+      return;
     }
     if (acc.mode === "plain429") {
       return json(res, 429, {

@@ -27,12 +27,15 @@ import {
 import { pickMaskedDisplayValue } from "@/shared/utils/maskEmail";
 import { isAutomatedTestProcess, isBuildProcess } from "@/shared/utils/testProcess";
 import { refreshGithubCopilotSubTokenIfNeeded } from "@/lib/tokenHealthCheckCopilot";
+import { isIdle } from "@/lib/idleState";
+import { getConnectionIdsUsedSince } from "@/lib/db/usageSummary";
 
 const LOG_PREFIX = "[HealthCheck]";
 const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 const TICK_MS = 60 * 1000; // sweep interval: every 60 seconds (restored after the const was once dropped while two call sites kept it)
 const DEFAULT_BATCH_SIZE = 20;
 const DEFAULT_HEALTH_CHECK_INTERVAL_MIN = 60; // default per-connection interval
+const IDLE_RENEW_RECENT_MS = 24 * 60 * 60 * 1000; // idle: renew only accounts used this recently
 
 function getConnectionLogLabel(conn: { name?: string; email?: string; id?: string }): string {
   return pickMaskedDisplayValue([conn.name, conn.email], conn.id || "-");
@@ -325,9 +328,21 @@ export async function sweep() {
   }
   state.sweeping = true;
   try {
-    const connections = await getProviderConnections({ authType: "oauth" });
+    let connections = await getProviderConnections({ authType: "oauth" });
 
     if (!connections || connections.length === 0) return;
+
+    // While nobody uses the server, renew ahead of expiry only the accounts used in the last
+    // day; any other account renews its sign-in on the request that needs it.
+    if (isIdle()) {
+      const since = Date.now() - IDLE_RENEW_RECENT_MS;
+      const recent = getConnectionIdsUsedSince(new Date(since).toISOString());
+      connections = connections.filter(
+        (conn) =>
+          recent.has(conn.id) || (conn.lastUsedAt && new Date(conn.lastUsedAt).getTime() >= since)
+      );
+      if (connections.length === 0) return;
+    }
 
     const staggerMs = parseInt(process.env.HEALTHCHECK_STAGGER_MS || "3000", 10);
     const total = connections.length;

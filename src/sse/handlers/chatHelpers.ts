@@ -592,8 +592,16 @@ export function handleNoCredentials(
 ) {
   if (credentials?.allRateLimited) {
     const errorMsg = lastError || credentials.lastError || "Unavailable";
+    // A model cooldown carries the status of the failure behind it (cooldownStatus): only a
+    // rate or usage limit is a 429, a cooldown after an outage stays a 5xx.
     const status =
-      lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
+      lastStatus ||
+      Number(credentials.cooldownStatus) ||
+      Number(credentials.lastErrorCode) ||
+      HTTP_STATUS.SERVICE_UNAVAILABLE;
+    // A used-up usage window (not a short rate limit): the answer carries the plan-usage
+    // headers a program in front of the gateway uses to park the account until the reset.
+    const usageLimit = credentials.cooldownReason === "quota_exhausted";
     const cooldownModel =
       typeof credentials.cooldownModel === "string" && credentials.cooldownModel.trim().length > 0
         ? credentials.cooldownModel.trim()
@@ -612,6 +620,7 @@ export function handleNoCredentials(
         retryAfterAt: typeof credentials.retryAfter === "string" ? credentials.retryAfter : null,
         credentialsCoolingCount:
           typeof credentials.connectionsCount === "number" ? credentials.connectionsCount : null,
+        usageLimit,
       });
     }
 
@@ -620,7 +629,8 @@ export function handleNoCredentials(
       status,
       `[${provider}/${model}] ${errorMsg}`,
       credentials.retryAfter,
-      credentials.retryAfterHuman
+      credentials.retryAfterHuman,
+      { usageLimit }
     );
   }
 

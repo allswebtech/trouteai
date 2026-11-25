@@ -26,6 +26,7 @@ import {
 } from "@/lib/credentialHealth/cache";
 import { emit } from "@/lib/events/eventBus";
 import { isAutomatedTestProcess, isBuildProcess } from "@/shared/utils/testProcess";
+import { cancelPausedJob, runUnlessIdle } from "@/lib/idleState";
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ const DUE_SLACK_MS = 5_000; // Timer jitter tolerance when checking next-due tim
 const CONCURRENCY_LIMIT = 5; // Max simultaneous connection tests
 const LOG_PREFIX = "[CredentialHealth]";
 const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
+const IDLE_JOB = "credential-health";
 
 // ── State (globalThis singleton) ──────────────────────────────────────────
 
@@ -278,9 +280,13 @@ function scheduleSweep(): void {
   if (!state.initialized) return;
   if (state.sweepTimer) clearTimeout(state.sweepTimer);
 
-  // Fixed tick; per-connection nextDueAt decides who gets tested
+  // Fixed tick; per-connection nextDueAt decides who gets tested. While the server is idle the
+  // sweep waits for the next request (a request finds a bad credential itself).
   state.sweepTimer = setTimeout(() => {
-    sweep().catch((err) => console.error(LOG_PREFIX, "Sweep failed:", err));
+    state.sweepTimer = null;
+    runUnlessIdle(IDLE_JOB, () =>
+      sweep().catch((err) => console.error(LOG_PREFIX, "Sweep failed:", err))
+    );
   }, getSweepInterval());
   state.sweepTimer.unref?.();
 }
@@ -302,7 +308,10 @@ export function initCredentialHealthCheck(): void {
   );
 
   state.sweepTimer = setTimeout(() => {
-    sweep().catch((err) => console.error(LOG_PREFIX, "Initial sweep failed:", err));
+    state.sweepTimer = null;
+    runUnlessIdle(IDLE_JOB, () =>
+      sweep().catch((err) => console.error(LOG_PREFIX, "Initial sweep failed:", err))
+    );
   }, INITIAL_DELAY_MS);
   state.sweepTimer.unref?.();
 }
@@ -316,6 +325,7 @@ export function stopCredentialHealthCheck(): void {
     clearTimeout(state.sweepTimer);
     state.sweepTimer = null;
   }
+  cancelPausedJob(IDLE_JOB);
   state.initialized = false;
 }
 

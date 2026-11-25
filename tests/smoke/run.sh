@@ -3,7 +3,7 @@
 # default data folder (~/.trouteai) is never touched.
 #
 #   sh tests/smoke/run.sh             test the project build (node app.cjs; run `npm run build` first)
-#   sh tests/smoke/run.sh trouteai    test an installed npm package (the `trouteai` command)
+#   sh tests/smoke/run.sh trouteai      test an installed npm package (the `trouteai` command)
 #
 # It starts mock-upstream.mjs (a fake OpenAI-compatible provider), starts TRouteAI with a
 # temporary data folder and a known password, runs e2e.mjs, and stops both. For the project

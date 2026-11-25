@@ -11,6 +11,7 @@
  */
 
 import { TOKEN_EXTRACTION_CONFIGS } from "./tokenExtractionConfig";
+import { runUnlessIdle } from "@/lib/idleState";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -77,7 +78,7 @@ class AutoRefreshDaemon {
     this.check().catch(() => {});
 
     this.timerId = setInterval(() => {
-      this.check().catch(() => {});
+      runUnlessIdle("auto-refresh-daemon", () => this.check().catch(() => {}));
     }, this.checkIntervalMs);
     // Don't keep the process alive solely for this periodic daemon.
     (this.timerId as { unref?: () => void })?.unref?.();

@@ -6,7 +6,6 @@ import { adjustMaxTokens } from "../helpers/maxTokensHelper.ts";
 import { sanitizeToolId } from "../helpers/schemaCoercion.ts";
 import { safeParseJSON } from "../helpers/jsonUtil.ts";
 import { applyKimiCodingThinking } from "../helpers/claudeHelper.ts";
-import { DEFAULT_THINKING_CLAUDE_SIGNATURE } from "../../config/defaultThinkingSignature.ts";
 import { isAdaptiveThinkingOnly } from "../../../src/shared/constants/modelSpecs.ts";
 import { fitThinkingToMaxTokens } from "./openai-to-claude/thinkingBudget.ts";
 import { enforceToolResultAdjacency } from "./openai-to-claude/toolResultAdjacency.ts";
@@ -60,6 +59,30 @@ type ClaudeTool = {
   cache_control?: { type: string; ttl?: string };
   defer_loading?: boolean;
 };
+
+/**
+ * The service refuses a cache marker inside `tool_result.content` ("cache_control may not be
+ * specified within `tool_result.content`. Instead, place it directly on `tool_result`").
+ * Remove every nested marker and return the first, for the caller to put on the tool_result.
+ */
+export function hoistNestedToolResultCacheControl(content: unknown): {
+  content: unknown;
+  cacheControl: unknown;
+} {
+  if (!Array.isArray(content)) return { content, cacheControl: undefined };
+  let cacheControl: unknown;
+  let found = false;
+  const cleaned = content.map((block) => {
+    if (!block || typeof block !== "object") return block;
+    const rec = block as Record<string, unknown>;
+    if (rec.cache_control === undefined) return block;
+    found = true;
+    const { cache_control, ...rest } = rec;
+    if (cacheControl === undefined) cacheControl = cache_control;
+    return rest;
+  });
+  return { content: found ? cleaned : content, cacheControl };
+}
 
 /**
  * Recursively strips empty text blocks from content arrays.
@@ -164,8 +187,12 @@ export function openaiToClaudeRequest(model, body, stream, credentials = null) {
   if (body.temperature === undefined && body.top_p !== undefined) {
     result.top_p = body.top_p;
   }
-  if (body.stop !== undefined) {
-    result.stop_sequences = Array.isArray(body.stop) ? body.stop : [body.stop];
+  // `stop: null` is how many OpenAI clients write "no stop"; `[null]` is a 400 upstream.
+  const stopSequences = (Array.isArray(body.stop) ? body.stop : [body.stop]).filter(
+    (value) => typeof value === "string" && value !== ""
+  );
+  if (stopSequences.length > 0) {
+    result.stop_sequences = stopSequences;
   }
 
   // Thinking configuration
@@ -517,10 +544,13 @@ function getContentBlocksFromMessage(
     const toolContent = Array.isArray(msg.content)
       ? stripEmptyTextBlocks(msg.content)
       : msg.content;
+    const hoisted = hoistNestedToolResultCacheControl(toolContent);
+    const cacheControl = msg.cache_control !== undefined ? msg.cache_control : hoisted.cacheControl;
     blocks.push({
       type: "tool_result",
       tool_use_id: sanitizedToolUseId,
-      content: toolContent,
+      content: hoisted.content,
+      ...(cacheControl !== undefined && { cache_control: cacheControl }),
     });
   } else if (msg.role === "user") {
     if (typeof msg.content === "string") {
@@ -538,11 +568,15 @@ function getContentBlocksFromMessage(
           const resultContent = Array.isArray(part.content)
             ? stripEmptyTextBlocks(part.content)
             : part.content;
+          const hoisted = hoistNestedToolResultCacheControl(resultContent);
+          const cacheControl =
+            part.cache_control !== undefined ? part.cache_control : hoisted.cacheControl;
           blocks.push({
             type: "tool_result",
             tool_use_id: sanitizeToolId(part.tool_use_id),
-            content: resultContent,
+            content: hoisted.content,
             ...(part.is_error && { is_error: part.is_error }),
+            ...(cacheControl !== undefined && { cache_control: cacheControl }),
           });
         } else if (part.type === "image_url") {
           const url = part.image_url.url;
@@ -620,19 +654,16 @@ function getContentBlocksFromMessage(
           //
           // Fix: strip thinking blocks whose signature is the empty string — that explicit
           // empty value is the hallmark of a synthesized block from a non-Anthropic provider.
-          // Thinking blocks with `signature: undefined` (field absent) are legitimate Claude-
-          // format messages and fall through to the DEFAULT_THINKING_CLAUDE_SIGNATURE fallback
-          // as before.
+          // Thinking blocks with `signature: undefined` (field absent) are kept as they are.
           if (part.type === "thinking" && part.signature === "") {
             continue; // drop — synthesized by non-Anthropic provider, no valid signature
           }
           if (part.type === "redacted_thinking" && part.data === "") {
             continue; // drop — same: empty data from non-Anthropic provider
           }
-          blocks.push({
-            ...part,
-            signature: part.signature || DEFAULT_THINKING_CLAUDE_SIGNATURE,
-          });
+          // A block without a signature is kept without one: an Anthropic target drops it
+          // (prepareClaudeRequest), other Claude-format targets use its text.
+          blocks.push({ ...part });
         } else if (part.type === "tool_use") {
           // Tool name already has prefix from tool declarations, keep as-is
           // CRITICAL: Skip tool_use blocks with empty name (causes Claude 400 error)
@@ -704,10 +735,9 @@ function getContentBlocksFromMessage(
       hasToolUseBlock &&
       !hasThinkingBlock
     ) {
-      blocks.unshift({
-        type: "redacted_thinking",
-        data: DEFAULT_THINKING_CLAUDE_SIGNATURE,
-      });
+      // An unsigned marker: other Claude-format targets fill it with the cached reasoning
+      // text; an Anthropic target drops it and switches manual thinking off for the turn.
+      blocks.unshift({ type: "thinking", thinking: "" });
     }
   }
 

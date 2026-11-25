@@ -28,8 +28,8 @@ export const MAX_BODY_BYTES_AUDIO = 100 * 1024 * 1024;
 /** Larger limit for file uploads: 500 MB */
 export const MAX_BODY_BYTES_FILE = 500 * 1024 * 1024;
 
-/** Larger limit for LLM request payloads: 50 MB */
-export const MAX_BODY_BYTES_LLM_API = 50 * 1024 * 1024;
+/** Larger limit for LLM request payloads: 64 MB (a long coding session with images). */
+export const MAX_BODY_BYTES_LLM_API = 64 * 1024 * 1024;
 
 /** Allows one 20 MiB image as multipart or base64 JSON plus envelope overhead. */
 export const MAX_BODY_BYTES_IMAGE_EDIT = 30 * 1024 * 1024;
@@ -42,6 +42,7 @@ type BodySizeRule = { prefix: string; limit: number };
 const ROUTE_LIMITS: BodySizeRule[] = [
   { prefix: "/api/db-backups/import", limit: MAX_BODY_BYTES_IMPORT },
   { prefix: "/api/v1/chat/completions", limit: MAX_BODY_BYTES_LLM_API },
+  { prefix: "/api/v1/messages", limit: MAX_BODY_BYTES_LLM_API },
   { prefix: "/api/v1/responses", limit: MAX_BODY_BYTES_LLM_API },
   { prefix: "/api/v1/images/edits", limit: MAX_BODY_BYTES_IMAGE_EDIT },
   { prefix: "/api/v1/audio/transcriptions", limit: MAX_BODY_BYTES_AUDIO },

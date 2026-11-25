@@ -26,6 +26,7 @@ import {
   type SsePassthroughResult,
 } from "./streamingPassthrough.ts";
 import type { AntigravityCredentials } from "../antigravity.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 const LONG_RETRY_THRESHOLD_MS = 60_000;
 const CREDITS_EXHAUSTED_TTL_MS = 5 * 60 * 60 * 1000; // 5 hours
@@ -44,15 +45,17 @@ export type OnAntigravityCreditsUpdate = (accountId: string, balance: number) =>
 const MAX_CREDITS_EXHAUSTED_ENTRIES = 50;
 const creditsExhaustedUntil = new Map<string, number>();
 
-const _creditsExhaustedSweep = setInterval(() => {
-  const now = Date.now();
-  for (const [key, until] of creditsExhaustedUntil) {
-    if (now >= until) creditsExhaustedUntil.delete(key);
-  }
-}, 60_000);
-if (typeof _creditsExhaustedSweep === "object" && "unref" in _creditsExhaustedSweep) {
-  (_creditsExhaustedSweep as { unref?: () => void }).unref?.();
-}
+// Pauses while the server is idle: nothing adds entries then.
+setIdleAwareInterval(
+  "antigravity-credits-exhausted-sweep",
+  () => {
+    const now = Date.now();
+    for (const [key, until] of creditsExhaustedUntil) {
+      if (now >= until) creditsExhaustedUntil.delete(key);
+    }
+  },
+  60_000
+);
 
 /** True while `accountId`'s Google One AI credits are marked exhausted. @internal */
 export function isCreditsExhausted(accountId: string): boolean {

@@ -9,7 +9,8 @@
  *
  *   GET https://q.{region}.amazonaws.com/ListAvailableModels?origin=AI_EDITOR
  *   Authorization: Bearer <accessToken>
- *   → { models: [ { modelId, modelName?, tokenLimits?: { maxInputTokens } }, ... ] }
+ *   → { models: [ { modelId, modelName?, tokenLimits?: { maxInputTokens, maxOutputTokens },
+ *                   promptCaching? } ] }
  *
  * This works for both "simple" Builder ID / social logins and AWS IAM Identity
  * Center accounts:
@@ -65,10 +66,42 @@ export type KiroModel = {
     agentic: boolean;
   };
   contextLength?: number;
+  outputTokenLimit?: number;
   rateMultiplier?: number;
   upstreamModelId?: string;
   description?: string;
+  promptCaching?: KiroPromptCaching;
 };
+
+/** Kiro's prompt-caching facts for a model, as its live model list states them. */
+export type KiroPromptCaching = {
+  supportsPromptCaching: boolean;
+  minimumTokensPerCacheCheckpoint: number | null;
+  maximumCacheCheckpointsPerRequest: number | null;
+};
+
+function toNonNegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function parsePromptCaching(value: unknown): KiroPromptCaching | undefined {
+  const promptCaching = asRecord(value);
+  if (typeof promptCaching.supportsPromptCaching !== "boolean") return undefined;
+  return {
+    supportsPromptCaching: promptCaching.supportsPromptCaching,
+    minimumTokensPerCacheCheckpoint: toNonNegativeInteger(
+      promptCaching.minimumTokensPerCacheCheckpoint
+    ),
+    maximumCacheCheckpointsPerRequest: toNonNegativeInteger(
+      promptCaching.maximumCacheCheckpointsPerRequest
+    ),
+  };
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
 
 export type KiroModelsResult = {
   models: KiroModel[];
@@ -98,7 +131,8 @@ export function parseKiroModels(data: unknown): KiroModel[] {
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const name = toNonEmptyString(item.modelName) || toNonEmptyString(item.name) || id;
-    models.push({ id, name, owned_by: "kiro" });
+    const promptCaching = parsePromptCaching(item.promptCaching);
+    models.push({ id, name, owned_by: "kiro", ...(promptCaching && { promptCaching }) });
   }
 
   return models;
@@ -152,18 +186,24 @@ function expandKiroModels(data: unknown): KiroModel[] {
     if (!upstreamId) continue;
     const display = formatDisplayName(item.modelName || item.name, upstreamId, item.rateMultiplier);
     const tokenLimits = asRecord(item.tokenLimits);
-    const contextLength = Number(tokenLimits.maxInputTokens) || 200000;
+    // Only Kiro's own numbers. A stamped 200k default would be saved as the model's discovered
+    // window and hide the real one (1M for Claude Sonnet 5 in the registry).
+    const contextLength = positiveNumber(tokenLimits.maxInputTokens);
+    const outputTokenLimit = positiveNumber(tokenLimits.maxOutputTokens);
     const rateMultiplier = Number(item.rateMultiplier);
+    const promptCaching = parsePromptCaching(item.promptCaching);
 
     for (const variant of buildVariants(upstreamId, display)) {
       if (seen.has(variant.id)) continue;
       seen.add(variant.id);
       expanded.push({
         ...variant,
-        contextLength,
+        ...(contextLength ? { contextLength } : {}),
+        ...(outputTokenLimit ? { outputTokenLimit } : {}),
         rateMultiplier: Number.isFinite(rateMultiplier) ? rateMultiplier : 1.0,
         upstreamModelId: upstreamId,
         description: toNonEmptyString(item.description) || "",
+        ...(promptCaching && { promptCaching }),
       });
     }
   }

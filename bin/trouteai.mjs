@@ -4,6 +4,7 @@
 //   trouteai config                 show the settings file and its values
 //   trouteai config set KEY VALUE   change a setting
 //   trouteai reset-password         set a new dashboard password
+//   trouteai key create NAME        make an API key and print it once
 //   trouteai update                 update to the latest version from npm
 //   trouteai uninstall              remove TRouteAI (asks before deleting your data)
 // Settings live in DATA_DIR/.env (default ~/.trouteai/.env). Priority: command-line
@@ -18,14 +19,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import util from "node:util";
 
 import { getDefaultDataDir } from "./cli/data-dir.mjs";
+import { createKeyCommand } from "./cli/create-key.mjs";
+import { updateCheckEnabled } from "./cli/update-check.mjs";
 import { ensureExternalLinks } from "../scripts/build/buildExternals.mjs";
 import { envHasExplicitHeapFlag, resolveMaxOldSpaceMb } from "../scripts/build/runtime-env.mjs";
 import { parseEnvFile } from "../scripts/build/sync-env.mjs";
+import { NETWORK_HINT, displayHost, resolveListenHosts } from "../scripts/dev/listen-hosts.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
 const DEFAULT_PORT = 20017;
-const DEFAULT_HOST = "0.0.0.0";
 const RECOMMENDED_NODE_MAJOR = 26;
 const SECRET_KEY = /PASSWORD|SECRET|TOKEN|PRIVATE|(^|_)KEY$/;
 
@@ -36,8 +39,9 @@ const SETTINGS_TEMPLATE = `# TRouteAI settings
 # Port for the dashboard and the API (1-65535).
 PORT=${DEFAULT_PORT}
 
-# Who can connect: 0.0.0.0 = this computer and your network, 127.0.0.1 = only this computer.
-HOST=${DEFAULT_HOST}
+# Who can connect. Empty = only this computer (127.0.0.1 and ::1).
+# 0.0.0.0 = this computer and your network.
+HOST=
 
 # Password for the first dashboard login (at least 8 characters).
 # Empty = a random password is saved to initial-admin-password.txt in this folder.
@@ -63,7 +67,11 @@ NEXT_PUBLIC_BASE_URL=
 # Server memory limit in MB (default: 35% of RAM, 512 to 4096). Raise it if the log shows "JavaScript heap out of memory".
 # TROUTEAI_MAX_HEAP_MB=1024
 
-# Secret keys are created automatically in server.env (same folder). Keep both files private.
+# true = say at start when a newer version is on npm (asks the npm registry). Default: off.
+# TROUTEAI_UPDATE_CHECK=true
+
+# Secret keys are created automatically in server.env and cli-token (same folder).
+# Keep these files and this one private.
 `;
 
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -97,19 +105,20 @@ function checkNodeVersion() {
 
 function printHelp() {
   console.log(`
-${bold(`TRouteAI ${VERSION}`)} - self-hosted AI router
+${bold(`TRouteAI ${VERSION}`)} - One door. Every model. Self-hosted AI gateway.
 
 Usage:
   trouteai [options]               Start TRouteAI
   trouteai config                  Show your settings
   trouteai config set KEY VALUE    Change a setting ("" as VALUE clears it)
   trouteai reset-password          Set a new dashboard password
+  trouteai key create NAME         Make an API key for an app and print it once
   trouteai update                  Update to the latest version
   trouteai uninstall               Remove TRouteAI (your data is kept unless you say yes)
 
 Options:
   -p, --port <number>    Port for the dashboard and the API (default ${DEFAULT_PORT})
-      --host <address>   Address to listen on (default ${DEFAULT_HOST} = this computer and your network)
+      --host <address>   Address to listen on (default: only this computer; 0.0.0.0 = your network too)
       --data-dir <dir>   Folder for settings and data (default ~/.trouteai)
       --verbose          Show all log messages in the terminal (default: warnings and errors)
   -v, --version          Show the version
@@ -122,7 +131,8 @@ Memory limit: TROUTEAI_MAX_HEAP_MB (default 35% of RAM, 512-4096 MB); raise it o
 Examples:
   trouteai --port 20018
   trouteai config set PORT 20018
-  trouteai config set HOST 127.0.0.1
+  trouteai config set HOST 0.0.0.0     (let other computers on your network connect)
+  trouteai key create my-app
 
 `);
 }
@@ -183,11 +193,6 @@ function loadSettingsIntoEnv(settingsFile) {
   return values;
 }
 
-function displayHost(host) {
-  if (["0.0.0.0", "::", "127.0.0.1", "::1", "localhost"].includes(host)) return "localhost";
-  return host.includes(":") ? `[${host}]` : host;
-}
-
 function lanAddress() {
   for (const entries of Object.values(os.networkInterfaces())) {
     for (const entry of entries ?? []) {
@@ -211,7 +216,9 @@ function hasBuild() {
 
 async function startServer(options, dataDir, settingsFile, nodeNote) {
   // Some shells (csh/tcsh) export HOST as the machine name; that is not a listen address.
-  if (process.env.HOST && process.env.HOST === os.hostname()) delete process.env.HOST;
+  if (process.env.HOST && process.env.HOST === os.hostname() && process.env.HOST !== "localhost") {
+    delete process.env.HOST;
+  }
 
   const created = ensureSettingsFile(settingsFile);
   loadSettingsIntoEnv(settingsFile);
@@ -232,7 +239,8 @@ async function startServer(options, dataDir, settingsFile, nodeNote) {
   if (!port) {
     fail(`Invalid PORT "${portSetting}" (from ${settingsFile} or the environment). Use 1-65535.`);
   }
-  const host = process.env.HOST || DEFAULT_HOST;
+  const listen = resolveListenHosts(process.env.HOST);
+  const host = listen.primary;
 
   if (!hasBuild()) {
     fail(
@@ -252,11 +260,11 @@ async function startServer(options, dataDir, settingsFile, nodeNote) {
   }
   if (portProblem === "EACCES") fail(`No permission to use port ${port}. Pick a port above 1024.`);
   if (portProblem === "EADDRNOTAVAIL" || portProblem === "ENOTFOUND") {
-    fail(`HOST "${host}" is not an address of this computer. Try 0.0.0.0 or 127.0.0.1.`);
+    fail(`HOST "${host}" is not an address of this computer. Leave it empty, or try 0.0.0.0.`);
   }
 
   const url = `http://${displayHost(host)}:${port}`;
-  const network = ["0.0.0.0", "::"].includes(host) ? lanAddress() : null;
+  const network = listen.everyInterface ? lanAddress() : null;
   const passwordFile = path.join(dataDir, "initial-admin-password.txt");
   const firstStart = !fs.existsSync(path.join(dataDir, "storage.sqlite"));
   const label = (text) => `  ${dim(text.padEnd(10))}`;
@@ -273,6 +281,8 @@ async function startServer(options, dataDir, settingsFile, nodeNote) {
   }
   lines.push(`${label("Settings")}${settingsFile}${created ? dim("  (new)") : ""}`);
   lines.push(`${label("Data")}${dataDir}`);
+  // On a hosting panel its web server is the way in, so the hint would mislead there.
+  if (listen.loopbackOnly && !ON_PANEL) lines.push("", `  ${dim(NETWORK_HINT)}`);
   if (nodeNote) lines.push("", `  ${yellow(nodeNote)}`);
   lines.push("", `  ${dim("Stop: Ctrl+C   ·   Help: trouteai --help")}`, "");
   console.log(lines.join("\n"));
@@ -440,7 +450,7 @@ async function update(settingsFile) {
 async function assertNotRunning(settingsFile, retryCommand) {
   if (fs.existsSync(settingsFile)) loadSettingsIntoEnv(settingsFile);
   const port = parsePort(process.env.DASHBOARD_PORT || process.env.PORT) || DEFAULT_PORT;
-  if ((await probePort(port, process.env.HOST || DEFAULT_HOST)) === "EADDRINUSE") {
+  if ((await probePort(port, resolveListenHosts(process.env.HOST).primary)) === "EADDRINUSE") {
     fail(
       `TRouteAI seems to be running on port ${port}. Stop it first (Ctrl+C in its terminal),\n` +
         `    then run: ${retryCommand}`
@@ -493,13 +503,7 @@ async function uninstall(dataDir, settingsFile) {
 
 /** One line when npm has a newer version; never blocks or fails the start. */
 function checkForUpdateInBackground() {
-  if (
-    ON_PANEL ||
-    !process.stdout.isTTY ||
-    /^(0|false|no)$/i.test(process.env.TROUTEAI_UPDATE_CHECK || "")
-  ) {
-    return;
-  }
+  if (!updateCheckEnabled()) return;
   fetch("https://registry.npmjs.org/trouteai/latest", {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
@@ -703,6 +707,8 @@ async function main() {
     await uninstall(dataDir, settingsFile);
   } else if (command === "reset-password" && positionals.length === 1) {
     await resetPassword();
+  } else if (command === "key" && positionals[1] === "create") {
+    await createKeyCommand(dataDir, positionals.slice(2).join(" "), options.port);
   } else {
     fail(`Unknown command "${positionals.join(" ")}". Run "trouteai --help".`);
   }

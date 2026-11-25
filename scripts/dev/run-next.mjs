@@ -24,6 +24,10 @@ import { randomUUID } from "node:crypto";
 import { getMainServerTimeoutConfig } from "./main-server-timeouts.mjs";
 import { normalizeBasePath } from "../build/normalizeBasePath.mjs";
 import { applyTerminalLogLevel, wantsInfoLogs } from "./terminalLog.mjs";
+import { displayHost, resolveListenHosts } from "./listen-hosts.mjs";
+import { stripApiTrailingSlash } from "./api-path.mjs";
+import { addEventStreamProxyHeaders } from "./event-stream-headers.mjs";
+import { ensureCliTokenFile } from "./cli-token-file.mjs";
 
 const { maybeHandleDisallowedMethod } = methodGuard;
 
@@ -92,6 +96,16 @@ for (const [key, value] of Object.entries(mergedEnv)) {
   }
 }
 
+// The command token for `trouteai key create` (cli-token-file.mjs). A failure here only stops
+// that command from working, never the server.
+try {
+  ensureCliTokenFile(process.env.DATA_DIR);
+} catch (error) {
+  console.warn(
+    `[WARN] Could not create the command token in ${process.env.DATA_DIR} (${error?.code || error?.message}); "trouteai key create" will not work.`
+  );
+}
+
 // Production: keep the terminal to warnings and errors unless APP_LOG_LEVEL asks for more.
 if (!dev) {
   applyTerminalLogLevel(process.env.APP_LOG_LEVEL);
@@ -109,7 +123,9 @@ process.env.NODE_ENV = dev ? "development" : "production";
 process.env.TROUTEAI_INTERNAL_SCHEME = "http";
 
 const { dashboardPort } = runtimePorts;
-const hostname = process.env.HOST || "0.0.0.0";
+// Only this computer (127.0.0.1 and ::1) unless HOST says otherwise; see listen-hosts.mjs.
+const listen = resolveListenHosts(process.env.HOST);
+const hostname = listen.primary;
 // Turbopack by default in dev (matches the Next 16 CLI default and the production
 // build default in build-next-isolated.mjs); TROUTEAI_USE_TURBOPACK=0 is the
 // webpack escape hatch.
@@ -139,6 +155,11 @@ function createNextApp() {
     webpack: !useTurbopack,
   });
 }
+
+// Request activity for src/lib/idleState.ts: background jobs pause while nothing uses the
+// server and resume on the next request. Created before Next starts, so the jobs started at boot
+// see it; no request yet means the server is idle until its first request.
+const activityState = (globalThis.__trouteaiActivity ||= { lastRequestAt: 0, inFlight: 0 });
 
 let nextApp = createNextApp();
 
@@ -198,25 +219,47 @@ async function start() {
     shuttingDown: false,
     activeRequests: 0,
   });
-  const server = http.createServer(
-    wrapRequestListenerWithHeadResponseGuard((req, res) => {
-      if (maybeHandleDisallowedMethod(req, res)) return;
-      // Stamp the real TCP peer IP before Next sees the request, so the authz
-      // middleware can decide LOCAL_ONLY locality without trusting the Host header.
-      stampPeerIp(req);
-      shutdownState.activeRequests++;
-      let counted = true;
-      const release = () => {
-        if (counted) {
-          counted = false;
-          shutdownState.activeRequests--;
+  const basePath = normalizeBasePath(process.env.TROUTEAI_BASE_PATH);
+  // Health probes come every few seconds from hosting panels and do not count as use.
+  const healthProbePaths = new Set(["/healthz", "/api/health/ping"]);
+  const isHealthProbePath = (pathname) => {
+    let p = pathname.replace(/\/+$/, "") || "/";
+    if (basePath && (p === basePath || p.startsWith(`${basePath}/`))) {
+      p = p.slice(basePath.length) || "/";
+    }
+    return healthProbePaths.has(p);
+  };
+  const requestListener = wrapRequestListenerWithHeadResponseGuard((req, res) => {
+    if (maybeHandleDisallowedMethod(req, res)) return;
+    req.url = stripApiTrailingSlash(req.url, basePath);
+    addEventStreamProxyHeaders(res);
+    // Stamp the real TCP peer IP before Next sees the request, so the authz
+    // middleware can decide LOCAL_ONLY locality without trusting the Host header.
+    stampPeerIp(req);
+    shutdownState.activeRequests++;
+    const isHealthProbe = isHealthProbePath((req.url || "/").split("?")[0]);
+    if (!isHealthProbe) {
+      activityState.inFlight++;
+      activityState.lastRequestAt = Date.now();
+      if (typeof activityState.wake === "function") activityState.wake();
+    }
+    let counted = true;
+    const release = () => {
+      if (counted) {
+        counted = false;
+        shutdownState.activeRequests--;
+        if (!isHealthProbe) {
+          activityState.inFlight--;
+          activityState.lastRequestAt = Date.now();
         }
-      };
-      res.on("close", release);
-      res.on("finish", release);
-      return requestHandler(req, res);
-    })
-  );
+      }
+    };
+    res.on("close", release);
+    res.on("finish", release);
+    return requestHandler(req, res);
+  });
+  // One server per listen address (127.0.0.1 and ::1 by default), all with the same handlers.
+  const servers = listen.hosts.map(() => http.createServer(requestListener));
   // Node's http.Server default keepAliveTimeout (5_000ms) races pooled
   // keep-alive HTTP clients that idle longer than that between requests (e.g.
   // the JVM java.net.http.HttpClient used by JetBrains AI Assistant), which
@@ -224,9 +267,20 @@ async function start() {
   // Raise both timeouts well above any realistic client idle-pool
   // window, mirroring src/lib/apiBridgeServer.ts's pattern.
   const mainServerTimeouts = getMainServerTimeoutConfig();
-  server.keepAliveTimeout = mainServerTimeouts.keepAliveTimeoutMs;
-  server.headersTimeout = mainServerTimeouts.headersTimeoutMs;
-  server.on("upgrade", async (req, socket, head) => {
+  for (const server of servers) {
+    server.keepAliveTimeout = mainServerTimeouts.keepAliveTimeoutMs;
+    server.headersTimeout = mainServerTimeouts.headersTimeoutMs;
+  }
+  const onUpgrade = async (req, socket, head) => {
+    // An open WebSocket (a live dashboard page, a Responses session) is use for as long as it
+    // stays open.
+    activityState.inFlight++;
+    activityState.lastRequestAt = Date.now();
+    if (typeof activityState.wake === "function") activityState.wake();
+    socket.once("close", () => {
+      activityState.inFlight--;
+      activityState.lastRequestAt = Date.now();
+    });
     try {
       const pathname = (req.url || "/").split("?")[0];
       if (pathname === liveWsPath && typeof globalThis.__trouteaiLiveWsUpgrade === "function") {
@@ -244,12 +298,11 @@ async function start() {
       }
       console.error("[WS] Upgrade handling failed:", error);
     }
-  });
+  };
+  for (const server of servers) server.on("upgrade", onUpgrade);
 
-  server.on("error", (error) => {
-    console.error("[FATAL] Next custom server failed:", error);
-    process.exit(1);
-  });
+  const closeServers = () =>
+    Promise.all(servers.map((server) => new Promise((resolve) => server.close(() => resolve()))));
 
   // Single shutdown owner: src/lib/gracefulShutdown.ts (registered by Next
   // instrumentation in this same process) owns the SIGINT/SIGTERM/SIGHUP
@@ -258,8 +311,11 @@ async function start() {
   // module). Registering our own signal handlers too would race its sequence
   // and call process.exit() before in-flight requests finish draining.
   globalThis.__trouteaiServerHandles = {
-    closeServer: () => new Promise((resolve) => server.close(() => resolve())),
+    closeServer: closeServers,
     closeNext: () => nextApp.close(),
+    closeConnections: () => {
+      for (const server of servers) server.closeAllConnections?.();
+    },
   };
 
   // Fallback only: if graceful shutdown never registered (e.g. instrumentation
@@ -267,7 +323,7 @@ async function start() {
   const fallbackShutdown = async (signal) => {
     if (globalThis.__trouteaiShutdown?.init) return; // owner present → let it run
     try {
-      await new Promise((resolve) => server.close(resolve));
+      await closeServers();
       await nextApp.close();
     } catch (error) {
       console.error("[SHUTDOWN] Failed during signal:", signal, error);
@@ -278,20 +334,57 @@ async function start() {
   process.on("SIGINT", () => void fallbackShutdown("SIGINT"));
   process.on("SIGTERM", () => void fallbackShutdown("SIGTERM"));
 
-  server.listen(dashboardPort, hostname, () => {
-    if (!dev) {
-      const shownHost = ["0.0.0.0", "::", "127.0.0.1", "::1"].includes(hostname)
-        ? "localhost"
-        : hostname;
-      process.stdout.write(
-        `  ✓ TRouteAI is ready, listening on http://${shownHost}:${dashboardPort}\n`
-      );
-      return;
+  const primaryError = await listenOn(servers[0], listen.hosts[0]);
+  if (primaryError) {
+    console.error("[FATAL] Next custom server failed:", primaryError);
+    process.exit(1);
+  }
+  servers[0].on("error", (error) => {
+    console.error("[FATAL] Next custom server failed:", error);
+    process.exit(1);
+  });
+  for (let index = 1; index < servers.length; index++) {
+    const host = listen.hosts[index];
+    const error = await listenOn(servers[index], host);
+    if (!error) {
+      servers[index].on("error", (later) => {
+        console.warn(`[WARN] The listener on ${host} failed: ${later?.message || later}`);
+      });
+      continue;
     }
-    const bundler = useTurbopack ? "turbopack" : "webpack";
-    console.log(
-      `[Next] ${mode} server listening on http://${hostname}:${dashboardPort} (${bundler})`
+    // A computer without IPv6 has no ::1; 127.0.0.1 still serves "localhost" there.
+    if (error.code === "EADDRNOTAVAIL" || error.code === "EAFNOSUPPORT") continue;
+    console.warn(
+      `[WARN] Could not also listen on ${host} port ${dashboardPort} (${error.code || error.message}); use http://127.0.0.1:${dashboardPort}`
     );
+  }
+
+  if (!dev) {
+    process.stdout.write(
+      `  ✓ TRouteAI is ready, listening on http://${displayHost(hostname)}:${dashboardPort}\n`
+    );
+    return;
+  }
+  const bundler = useTurbopack ? "turbopack" : "webpack";
+  console.log(
+    `[Next] ${mode} server listening on http://${displayHost(hostname)}:${dashboardPort} (${listen.hosts.join(", ")}, ${bundler})`
+  );
+}
+
+/** Listen on one address; resolves with the error instead of throwing it. */
+function listenOn(server, host) {
+  return new Promise((resolve) => {
+    const onError = (error) => {
+      server.off("listening", onListening);
+      resolve(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve(null);
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(dashboardPort, host);
   });
 }
 

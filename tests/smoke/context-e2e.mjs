@@ -486,6 +486,110 @@ await withMode("overflow-kiro-slow", async () => {
   );
 }
 
+// ── 6. a late failure keeps its HTTP status unless the client asked for an event stream ─
+// The early keepalive wrapper commits to a 200 after 2 s. It is used only for a body with
+// `stream: true` AND an Accept header naming text/event-stream, so a streaming client that
+// sends `Accept: application/json` still gets the provider's real 429 and its headers.
+// Each case has its own node and account, so one case's cooldown cannot touch another.
+async function lateNode(prefix, account, mode) {
+  const n = await api("/api/provider-nodes", {
+    method: "POST",
+    body: { name: `Ctx ${prefix}`, prefix, type: "anthropic-compatible", baseUrl: mockUrl + "/v1" },
+  });
+  await api("/api/providers", {
+    method: "POST",
+    body: { provider: n.json?.node?.id, name: account, apiKey: account },
+  });
+  await mock("/__control", { key: account, mode, resetInSec: 120 });
+  return `${prefix}/${MODEL}`;
+}
+async function rawSend(path, body, headers) {
+  const started = Date.now();
+  const res = await fetch(base + path, {
+    method: "POST",
+    signal: AbortSignal.timeout(60_000),
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {}
+  return {
+    status: res.status,
+    type: res.headers.get("content-type") || "",
+    retryAfter: res.headers.get("retry-after"),
+    ms: Date.now() - started,
+    text,
+    json,
+  };
+}
+const anthropicAuth = { "x-api-key": apiKey, "anthropic-version": "2023-06-01" };
+const hiMsg = [{ role: "user", content: "hi" }];
+{
+  const model = await lateNode("ctxl1", "ctx-l1", "limit-slow");
+  const r = await rawSend(
+    "/v1/messages",
+    { model, max_tokens: 50, stream: true, messages: hiMsg },
+    { ...anthropicAuth, accept: "application/json" }
+  );
+  check(
+    "late 429, stream: true with Accept application/json, /v1/messages: HTTP 429 in the Anthropic error shape",
+    r.status === 429 &&
+      r.type.includes("application/json") &&
+      r.json?.type === "error" &&
+      typeof r.json?.error?.type === "string" &&
+      !!r.retryAfter,
+    `status ${r.status} ${r.type} retry-after ${r.retryAfter} ${r.ms} ms ${r.text.slice(0, 160)}`
+  );
+}
+{
+  const model = await lateNode("ctxl2", "ctx-l2", "limit-slow");
+  const r = await rawSend(
+    "/v1/responses",
+    { model, stream: true, input: "hi" },
+    { authorization: `Bearer ${apiKey}`, accept: "application/json" }
+  );
+  check(
+    "late 429, stream: true with Accept application/json, /v1/responses: HTTP 429 with an error body",
+    r.status === 429 && r.type.includes("application/json") && !!r.json?.error,
+    `status ${r.status} ${r.type} retry-after ${r.retryAfter} ${r.ms} ms ${r.text.slice(0, 160)}`
+  );
+}
+{
+  const model = await lateNode("ctxl3", "ctx-l3", "limit-slow");
+  const r = await rawSend(
+    "/v1/messages",
+    { model, max_tokens: 50, stream: true, messages: hiMsg },
+    { ...anthropicAuth, accept: "text/event-stream" }
+  );
+  check(
+    "late 429, stream: true with Accept text/event-stream, /v1/messages: 200 stream with pings and an in-band error",
+    r.status === 200 &&
+      r.type.includes("text/event-stream") &&
+      /event: ping/.test(r.text) &&
+      /event: error/.test(r.text),
+    `status ${r.status} ${r.type} ${r.ms} ms ${r.text.replace(/event: ping\ndata: [^\n]*\n\n/g, "").slice(0, 160)}`
+  );
+}
+{
+  const model = await lateNode("ctxl4", "ctx-l4", "slow");
+  const r = await rawSend(
+    "/v1/messages",
+    { model, max_tokens: 50, messages: hiMsg },
+    { ...anthropicAuth, accept: "text/event-stream" }
+  );
+  check(
+    "slow answer, no stream field with Accept text/event-stream, /v1/messages: plain JSON, no keepalive wrapper",
+    r.status === 200 &&
+      r.type.includes("application/json") &&
+      r.json?.type === "message" &&
+      r.ms >= 2500,
+    `status ${r.status} ${r.type} ${r.ms} ms ${r.text.slice(0, 160)}`
+  );
+}
+
 const ok = results.filter(Boolean).length;
 console.log(`\n${ok}/${results.length} passed`);
 process.exit(ok === results.length ? 0 : 1);

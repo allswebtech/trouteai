@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { isModelSyncInternalRequest } from "../../../shared/services/modelSyncScheduler";
 import { isAuthRequired, isDashboardSessionAuthenticated } from "../../../shared/utils/apiAuth";
-import { getLegacyCliTokenSync, getMachineTokenSync } from "../../../lib/machineToken";
+import { carriesForwardingHeader, matchesCliTokenSecret } from "../../../lib/cliToken";
 import type { AuthOutcome, PolicyContext, RoutePolicy } from "../context";
 import { allow, reject } from "../context";
 import { extractApiKey, isValidApiKey } from "../../../sse/services/auth";
@@ -66,16 +66,13 @@ function isPrivateLanRequest(ctx: PolicyContext): boolean {
   return peerAddress ? isPrivateLanHost(peerAddress) : false;
 }
 
+// The command token (DATA_DIR/cli-token, src/lib/cliToken.ts): only from this computer, not
+// through a proxy or tunnel, and compared in constant time with the secret in the data folder.
 function hasValidCliToken(ctx: PolicyContext): boolean {
   if (!isLoopbackRequest(ctx)) return false;
   const headers = ctx.request.headers;
-  const provided = headers.get(CLI_TOKEN_HEADER);
-  if (!provided) return false;
-  const expectedTokens = [getMachineTokenSync(), getLegacyCliTokenSync()].filter(Boolean);
-  return expectedTokens.some((expected) => {
-    if (provided.length !== expected.length) return false;
-    return timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
-  });
+  if (carriesForwardingHeader(headers)) return false;
+  return matchesCliTokenSecret(headers.get(CLI_TOKEN_HEADER));
 }
 
 function hasBearerToken(headers: Headers): boolean {

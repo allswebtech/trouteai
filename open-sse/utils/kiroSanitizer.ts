@@ -7,10 +7,12 @@
  * `$ref`/`$defs`/`definitions`, `if`/`then`/`else`, etc.) or an empty
  * `required` array. It also rejects tool names longer than 64 characters.
  *
- * This pure helper strips the unsupported keys recursively, ensures a
- * top-level `required: []` is present, and hash-truncates over-long names —
- * returning a `nameMap` (truncated → original) so the streamed tool-call name
- * can be mapped back for the client. See chatCore.ts (request wiring) and
+ * This pure helper flattens a root `oneOf`/`anyOf`/`allOf` into one object schema (stripping
+ * the union whole would leave the tool without parameters), strips the unsupported keys
+ * recursively without touching property NAMES (a property called `if` or `$ref` is data, not a
+ * keyword), keeps the root an object whose `required` names only declared properties, and
+ * hash-truncates over-long names, returning a `nameMap` (truncated → original) so the streamed
+ * tool-call name can be mapped back for the client. See chatCore.ts (request wiring) and
  * translator/response/kiro-to-openai.ts (response reverse-mapping).
  */
 import { createHash } from "node:crypto";
@@ -39,20 +41,100 @@ const STRIP_KEYS = new Set<string>([
   "contentMediaType",
 ]);
 
+/** Keys whose value maps names chosen by the client to sub-schemas. */
+const NAME_MAP_KEYS = new Set<string>(["properties", "patternProperties"]);
+
+/** Root unions merged into one object schema, in this order. */
+const ROOT_UNION_KEYS = ["allOf", "oneOf", "anyOf"] as const;
+
+type SchemaObject = Record<string, unknown>;
+
+function isPlainObject(value: unknown): value is SchemaObject {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 /**
- * Recursively drop unsupported JSON-Schema keys and empty `required` arrays.
+ * Recursively drop unsupported JSON-Schema keys and empty `required` arrays. The entries of a
+ * `properties` / `patternProperties` map keep their names; only their sub-schemas are cleaned.
  * Non-object/array values are returned untouched.
  */
 function stripKeys(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map(stripKeys);
 
-  const cleaned: Record<string, unknown> = {};
-  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+  const cleaned: SchemaObject = {};
+  for (const [key, val] of Object.entries(value as SchemaObject)) {
+    if (NAME_MAP_KEYS.has(key) && isPlainObject(val)) {
+      const entries: SchemaObject = {};
+      for (const [name, subSchema] of Object.entries(val)) entries[name] = stripKeys(subSchema);
+      cleaned[key] = entries;
+      continue;
+    }
     if (STRIP_KEYS.has(key)) continue;
     if (key === "required" && Array.isArray(val) && val.length === 0) continue;
     cleaned[key] = stripKeys(val);
   }
+  return cleaned;
+}
+
+/**
+ * Merge root unions (and unions inside their branches) into one object schema. Properties are
+ * merged, the first definition wins; `allOf` adds every branch's `required`, `oneOf` / `anyOf`
+ * only the names every branch requires. `required` is not filtered here: a branch may require a
+ * name that only the root or another branch declares.
+ */
+function flattenRootSchema(schema: SchemaObject): SchemaObject {
+  const source: SchemaObject = { ...schema };
+  const branchesByKey = new Map<string, unknown[]>();
+  for (const keyword of ROOT_UNION_KEYS) {
+    const branches = source[keyword];
+    branchesByKey.set(keyword, Array.isArray(branches) ? branches : []);
+    delete source[keyword];
+  }
+
+  const cleaned = stripKeys(source) as SchemaObject;
+  cleaned.type = "object";
+  if (!isPlainObject(cleaned.properties)) cleaned.properties = {};
+  const properties = cleaned.properties as SchemaObject;
+  const required = new Set<unknown>(Array.isArray(cleaned.required) ? cleaned.required : []);
+
+  for (const keyword of ROOT_UNION_KEYS) {
+    const branches = (branchesByKey.get(keyword) ?? []).map((branch) =>
+      flattenRootSchema(isPlainObject(branch) ? branch : {})
+    );
+    if (branches.length === 0) continue;
+    for (const branch of branches) {
+      for (const [name, property] of Object.entries(branch.properties as SchemaObject)) {
+        if (!Object.hasOwn(properties, name)) properties[name] = property;
+      }
+    }
+    const branchRequired = branches.map(
+      (branch) => (Array.isArray(branch.required) ? branch.required : []) as unknown[]
+    );
+    if (keyword === "allOf") {
+      for (const names of branchRequired) names.forEach((name) => required.add(name));
+    } else {
+      const [first, ...rest] = branchRequired;
+      for (const name of first) {
+        if (rest.every((names) => names.includes(name))) required.add(name);
+      }
+    }
+  }
+
+  cleaned.required = [...required];
+  return cleaned;
+}
+
+/**
+ * The root schema as Kiro takes it: an object with `properties` and a `required` list (Kiro
+ * needs the key, `[]` when empty) that names only declared properties, each once.
+ */
+function normalizeRootSchema(schema: SchemaObject): SchemaObject {
+  const cleaned = flattenRootSchema(schema);
+  const properties = cleaned.properties as SchemaObject;
+  cleaned.required = [...new Set(cleaned.required as unknown[])].filter(
+    (name): name is string => typeof name === "string" && Object.hasOwn(properties, name)
+  );
   return cleaned;
 }
 
@@ -75,8 +157,10 @@ export interface SanitizeKiroToolsResult<T = unknown> {
 /**
  * Sanitize a Kiro `tools` array in place-safely (returns new objects).
  *
- * - Strips JSON-Schema keys Kiro rejects from each `inputSchema.json`.
- * - Ensures the top-level schema carries `required: []` (Kiro requires the key).
+ * - Flattens a root `allOf`/`oneOf`/`anyOf` into one object schema.
+ * - Strips JSON-Schema keys Kiro rejects from each `inputSchema.json`, keeping property names
+ *   that equal those keywords.
+ * - Keeps the root an object with `properties` and a `required` list of declared properties.
  * - Hash-truncates tool names > 64 chars and records the mapping in `nameMap`.
  *
  * Inputs that are not arrays are returned untouched with an empty `nameMap`,
@@ -103,10 +187,7 @@ export function sanitizeKiroTools<T>(tools: T): SanitizeKiroToolsResult<T> {
 
     const schema = spec.inputSchema?.json;
     if (schema && typeof schema === "object" && !Array.isArray(schema)) {
-      const cleaned = stripKeys(schema) as Record<string, unknown>;
-      if (!cleaned.required) {
-        cleaned.required = [];
-      }
+      const cleaned = normalizeRootSchema(schema as SchemaObject);
       return {
         ...tool,
         toolSpecification: {

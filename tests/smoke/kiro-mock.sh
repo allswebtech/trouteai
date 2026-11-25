@@ -87,6 +87,7 @@ writeFileSync(file, `id ${key.id || "-"}\n${key.key}\n`, { mode: 0o600 });
 node "$HERE/anthropic-conformance.mjs" "$DATA/key" "http://127.0.0.1:$PORT" kiro/claude-sonnet-5
 STATUS=$?
 node "$HERE/kiro-stream-failures.mjs" "$DATA/key" "http://127.0.0.1:$PORT" kiro/claude-sonnet-5 || STATUS=1
+node "$HERE/vision-e2e.mjs" "$DATA/key" "http://127.0.0.1:$PORT" "http://127.0.0.1:$MOCK_PORT" || STATUS=1
 # KIRO_MOCK_CLAUDE_CODE=1: also real Claude Code (the installed `claude`) through the server; its
 # first answer is cut off by the fake Kiro, so it must retry and print the full answer.
 if [ "${KIRO_MOCK_CLAUDE_CODE:-0}" = "1" ] && command -v claude >/dev/null 2>&1; then

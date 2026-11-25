@@ -16,10 +16,53 @@ export const anthropicProvider: RegistryEntry = {
     "Anthropic-Beta": ANTHROPIC_BETA_API_KEY,
   },
   models: [
+    // The current models (Anthropic's model table): 1M context, 128K output; sampling
+    // parameters are refused (or only their defaults taken), effort steers reasoning.
+    {
+      id: "claude-fable-5-2",
+      name: "Claude Fable 5.2",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+      supportsXHighEffort: true,
+      unsupportedParams: ["temperature", "top_p", "top_k"],
+    },
+    {
+      id: "claude-fable-5-1",
+      name: "Claude Fable 5.1",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+      supportsXHighEffort: true,
+      unsupportedParams: ["temperature", "top_p", "top_k"],
+    },
+    {
+      id: "claude-opus-5-5",
+      name: "Claude Opus 5.5",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+      supportsXHighEffort: true,
+      unsupportedParams: ["temperature", "top_p", "top_k"],
+    },
+    {
+      id: "claude-sonnet-5-5",
+      name: "Claude Sonnet 5.5",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+      supportsXHighEffort: true,
+      unsupportedParams: ["temperature", "top_p", "top_k"],
+    },
+    {
+      id: "claude-haiku-5-5",
+      name: "Claude Haiku 5.5",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+      supportsXHighEffort: true,
+      unsupportedParams: ["temperature", "top_p", "top_k"],
+    },
     {
       id: "claude-fable-5",
       name: "Claude Fable 5",
-      contextLength: 1048576,
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
       unsupportedParams: ["temperature", "top_p", "top_k"],
     },
     {
@@ -33,6 +76,8 @@ export const anthropicProvider: RegistryEntry = {
     {
       id: "claude-opus-4.7",
       name: "Claude Opus 4.7",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
       // Opus 4.7+ rejects non-default temperature/top_p/top_k with a 400 (sampling fixed;
       // reasoning via output_config.effort). Mirrors the dashed `claude` registry ids.
       unsupportedParams: ["temperature", "top_p", "top_k"],
@@ -40,21 +85,48 @@ export const anthropicProvider: RegistryEntry = {
     {
       id: "claude-opus-4.8",
       name: "Claude Opus 4.8",
-      contextLength: 1048576,
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
       // Opus 4.7+ (incl. 4.8, Fable 5) reject non-default sampling with a 400. Mirrors claude-opus-4.7.
       unsupportedParams: ["temperature", "top_p", "top_k"],
     },
-    { id: "claude-opus-4.6", name: "Claude Opus 4.6" },
-    { id: "claude-opus-4.5", name: "Claude Opus 4.5" },
+    {
+      id: "claude-opus-4.6",
+      name: "Claude Opus 4.6",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+    },
+    {
+      id: "claude-opus-4.5",
+      name: "Claude Opus 4.5",
+      contextLength: 200000,
+      maxOutputTokens: 64000,
+    },
     {
       id: "claude-sonnet-5",
       name: "Claude Sonnet 5",
-      contextLength: 1048576,
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
       // Sonnet 5 rejects non-default sampling params with a 400 (adaptive-only).
       unsupportedParams: ["temperature", "top_p", "top_k"],
     },
-    { id: "claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
-    { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.6" },
-    { id: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
+    {
+      id: "claude-sonnet-4.6",
+      name: "Claude Sonnet 4.6",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+    },
+    {
+      id: "claude-sonnet-4.5",
+      name: "Claude Sonnet 4.5",
+      contextLength: 200000,
+      maxOutputTokens: 64000,
+    },
+    {
+      id: "claude-haiku-4.5",
+      name: "Claude Haiku 4.5",
+      contextLength: 200000,
+      maxOutputTokens: 64000,
+    },
   ],
 };

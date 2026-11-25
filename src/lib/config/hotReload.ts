@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { SQLITE_FILE } from "@/lib/db/core";
 import { getSettings } from "@/lib/db/settings";
+import { pauseWhileIdle } from "@/lib/idleState";
 import { applyRuntimeSettings, type RuntimeReloadChange } from "./runtimeSettings";
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
@@ -63,20 +64,43 @@ function queueHotReloadCheck(source: string) {
     });
 }
 
+// Settings written through the app are applied at once (updateSettings), and the file watch
+// below sees writes by another process. The poll only covers a watch that misses an event, so
+// it pauses while the server is idle and checks again on the next request.
+function startPollTimer(pollIntervalMs: number) {
+  pollTimer = setInterval(() => {
+    if (pauseWhileIdle("config-hot-reload", () => resumePolling(pollIntervalMs))) {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+      return;
+    }
+    queueHotReloadCheck("hot-reload:poll");
+  }, pollIntervalMs);
+  if (typeof pollTimer === "object" && "unref" in pollTimer) {
+    (pollTimer as { unref?: () => void }).unref?.();
+  }
+}
+
+// The resume checks once at once, so a write made while the poll was paused (also one the file
+// watch missed, or one made where the watch is unavailable) is applied when use starts again.
+function resumePolling(pollIntervalMs: number) {
+  if (pollTimer || stopped) return;
+  queueHotReloadCheck("hot-reload:resume");
+  startPollTimer(pollIntervalMs);
+}
+
+let stopped = false;
+
 export function startRuntimeConfigHotReload(options: { pollIntervalMs?: number } = {}) {
   if (pollTimer || sqliteWatcher) return;
+  stopped = false;
 
   const pollIntervalMs = Math.max(
     options.pollIntervalMs || getPollIntervalMs(),
     MIN_POLL_INTERVAL_MS
   );
 
-  pollTimer = setInterval(() => {
-    queueHotReloadCheck("hot-reload:poll");
-  }, pollIntervalMs);
-  if (typeof pollTimer === "object" && "unref" in pollTimer) {
-    (pollTimer as { unref?: () => void }).unref?.();
-  }
+  startPollTimer(pollIntervalMs);
 
   if (SQLITE_FILE) {
     try {
@@ -104,6 +128,7 @@ export function startRuntimeConfigHotReload(options: { pollIntervalMs?: number }
 }
 
 export function stopRuntimeConfigHotReloadForTests() {
+  stopped = true;
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;

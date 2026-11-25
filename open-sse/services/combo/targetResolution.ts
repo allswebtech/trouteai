@@ -43,6 +43,7 @@ import type { ResilienceSettings } from "../../../src/lib/resilience/settings";
 import { applyStrategyOrdering } from "./applyStrategyOrdering.ts";
 import { clampComboDepth } from "./comboPredicates.ts";
 import {
+  countVisionSkippedAhead,
   describeCapabilityFilterExhaustion,
   filterTargetsByRequestCompatibility,
   resolveComboTargets,
@@ -120,6 +121,8 @@ export interface ResolvedComboTargetPipeline {
   getWeightedStepKeyForTarget: (target: ResolvedComboTarget) => string | null;
   /** Session-stickiness result — the attempt loop reads `.messageHash` on success/failure. */
   sticky: ApplyStickinessResult;
+  /** Targets ahead of the first kept one that were skipped because they cannot see. */
+  visionSkipped: number;
   preScreenMap: Map<string, PreScreenResult>;
 }
 
@@ -457,7 +460,7 @@ async function applyContinuityFilters(
   deps: ResolveComboTargetPipelineDeps,
   initialOrderedTargets: ResolvedComboTarget[]
 ): Promise<
-  | { orderedTargets: ResolvedComboTarget[]; sticky: ApplyStickinessResult }
+  | { orderedTargets: ResolvedComboTarget[]; sticky: ApplyStickinessResult; visionSkipped: number }
   | { earlyResponse: Response }
 > {
   const { strategy, body, combo, config, settings, log, relayOptions } = deps;
@@ -498,6 +501,7 @@ async function applyContinuityFilters(
   orderedTargets = filterTargetsByRequestCompatibility(orderedTargets, body, log, undefined, {
     failOpen: compatFilterFailOpen,
   });
+  const visionSkipped = countVisionSkippedAhead(preCompatTargets, orderedTargets, body);
   if (orderedTargets.length === 0 && preCompatTargets.length > 0) {
     const exhaustion = describeCapabilityFilterExhaustion(preCompatTargets, body, combo.name);
     if (exhaustion) {
@@ -543,7 +547,7 @@ async function applyContinuityFilters(
       }),
     };
   }
-  return { orderedTargets, sticky };
+  return { orderedTargets, sticky, visionSkipped };
 }
 
 /**
@@ -733,6 +737,7 @@ export async function resolveComboTargetPipeline(
     stickyWeightedLimit,
     getWeightedStepKeyForTarget,
     sticky: continuity.sticky,
+    visionSkipped: continuity.visionSkipped,
     preScreenMap,
   };
 }

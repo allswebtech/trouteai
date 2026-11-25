@@ -1,14 +1,11 @@
 /**
  * Echo the client-requested model/alias name back in the response.
  *
- * When a request uses an alias or combo (e.g. `claude-sonnet-cx` → `cx/gpt-5.5`),
- * TRouteAI forwards the upstream model name (`gpt-5.5`) in the response `model`
- * field. Strict clients (e.g. Claude Desktop) validate that the response model
- * matches the request and reject the mismatch with a 401. This opt-in helper
- * rewrites the `model` field back to the name the client asked for.
- *
- * The behavior is gated by a global setting (`echoRequestedModelName`, default off),
- * so the default response stays byte-for-byte unchanged.
+ * When a request uses an alias or combo (e.g. `claude-sonnet-cx` → `cx/gpt-5.5`), the upstream
+ * names its own model (`gpt-5.5`). Clients expect the `model` of the answer to be the string
+ * they sent (strict ones such as Claude Desktop reject a mismatch), so the name is written
+ * back. On by default; the setting `echoRequestedModelName: false` turns it off and the body
+ * then names the answering model's id. The X-TRouteAI-Model header always names it.
  */
 
 /**
@@ -28,11 +25,14 @@ export function echoModelInObject(obj: unknown, echoModel: string | null | undef
     if (typeof rec.model === "string") {
       rec.model = echoModel;
     }
-    const nested = rec.response;
-    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
-      const nestedRec = nested as Record<string, unknown>;
-      if (typeof nestedRec.model === "string") {
-        nestedRec.model = echoModel;
+    // Responses events nest it under `response`, an Anthropic `message_start` under `message`.
+    for (const key of ["response", "message"]) {
+      const nested = rec[key];
+      if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+        const nestedRec = nested as Record<string, unknown>;
+        if (typeof nestedRec.model === "string") {
+          nestedRec.model = echoModel;
+        }
       }
     }
   }
@@ -56,14 +56,16 @@ export function echoModelInSseLine(line: string, echoModel: string | null | unde
       parsed.model = echoModel;
       changed = true;
     }
-    // Responses API events nest `model` under `response.model` — see
-    // echoModelInObject for the shape.
-    const nested = parsed.response;
-    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
-      const nestedRec = nested as Record<string, unknown>;
-      if (typeof nestedRec.model === "string") {
-        nestedRec.model = echoModel;
-        changed = true;
+    // Responses events nest `model` under `response`, an Anthropic `message_start` under
+    // `message`; see echoModelInObject.
+    for (const key of ["response", "message"]) {
+      const nested = parsed[key];
+      if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+        const nestedRec = nested as Record<string, unknown>;
+        if (typeof nestedRec.model === "string") {
+          nestedRec.model = echoModel;
+          changed = true;
+        }
       }
     }
     if (!changed) return line;

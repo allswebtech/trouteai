@@ -3,6 +3,7 @@ import { FORMATS } from "../formats.ts";
 import { adjustMaxTokens } from "../helpers/maxTokensHelper.ts";
 import { webSearchBlockToText } from "../../services/webSearchResultText.ts";
 import { MAX_PDF_PAGE_IMAGES, extractPdfPageImages, extractPdfText } from "../../utils/pdfText.ts";
+import { ImageInputError } from "../../utils/imageInput.ts";
 
 type JsonRecord = Record<string, unknown>;
 const TOOL_CHOICE_ANY = ["a", "n", "y"].join("");
@@ -530,6 +531,12 @@ function convertClaudeMessage(
                 url: block.source.url,
               },
             });
+          } else {
+            // A Files API id (source.type "file") means nothing to another provider; say so
+            // instead of answering as if the image had not been sent.
+            throw new ImageInputError(
+              "An image in this request is given by a file id, which only Anthropic's own API can read. Send it as base64 data or a URL."
+            );
           }
           break;
 
@@ -627,6 +634,13 @@ function convertClaudeMessage(
                     url: `data:${c.source.media_type};base64,${c.source.data}`,
                   },
                 });
+                hasImage = true;
+              } else if (
+                c.type === "image" &&
+                c.source?.type === "url" &&
+                typeof c.source.url === "string"
+              ) {
+                parts.push({ type: "image_url", image_url: { url: c.source.url } });
                 hasImage = true;
               } else if (c.type === "document") {
                 // Claude Code's Read tool returns a PDF this way (and TRouteAI's web fetch a

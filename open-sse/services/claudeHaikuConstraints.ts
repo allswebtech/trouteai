@@ -1,7 +1,9 @@
+import { isAdaptiveThinkingOnly } from "../../src/shared/constants/modelSpecs.ts";
+
 type JsonRecord = Record<string, unknown>;
 
 // Models that reject `thinking.type:"adaptive"` and `output_config.effort` —
-// today, all Claude Haiku-tier models (4.5 / 3.5 / dated and aliased). Adaptive
+// the Haiku models before 5.5 (4.5 / 3.5 / dated and aliased). Adaptive
 // thinking + the effort knob landed on Sonnet 4.6 / Opus 4.5+ only; sending
 // either on Haiku is a hard 400 from the Messages API.
 const HAIKU_CONSTRAINT_PATTERN = /haiku/i;
@@ -15,8 +17,10 @@ function asRecord(value: unknown): JsonRecord | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : null;
 }
 
-function modelRejectsAdaptiveAndEffort(modelId: string | null | undefined): boolean {
+export function modelRejectsAdaptiveAndEffort(modelId: string | null | undefined): boolean {
   if (typeof modelId !== "string" || modelId.length === 0) return false;
+  // Haiku 5.5 and later are adaptive-only (a budget is a 400): the spec decides, not the name.
+  if (isAdaptiveThinkingOnly(modelId.replace(/^.*\//, ""))) return false;
   return HAIKU_CONSTRAINT_PATTERN.test(modelId);
 }
 

@@ -5,7 +5,13 @@
 import { register } from "../registry.ts";
 import { FORMATS } from "../formats.ts";
 import { v4 as uuidv4, v5 as uuidv5 } from "uuid";
-import { capMaxOutputTokens, capThinkingBudget } from "@/lib/modelCapabilities";
+import {
+  capMaxOutputTokens,
+  capThinkingBudget,
+  getResolvedModelCapabilities,
+} from "@/lib/modelCapabilities";
+import { ImageInputError, modelCannotSeeMessage } from "../../utils/imageInput.ts";
+import { modelRefusesSamplingParams } from "../../services/claudeCodeConstraints.ts";
 import {
   parseToolInput,
   normalizeKiroToolSchema,
@@ -51,6 +57,83 @@ function wrapSystemReminder(text: string): string {
  * Convert OpenAI messages to Kiro format
  * Rules: system/tool/user -> user role, merge consecutive same roles
  */
+/** Kiro answers 400 for a `toolSpecification.description` longer than this. */
+const KIRO_TOOL_DESC_MAX = 10000;
+
+/**
+ * Kiro `toolSpecification` entries for the client's tools. A description over
+ * KIRO_TOOL_DESC_MAX is replaced by a pointer and handed back as documentation text, which the
+ * caller puts into a message's content (never as an extra field on the message: Kiro rejects
+ * unknown fields).
+ */
+function buildKiroToolSpecs(tools): { specs: Array<Record<string, unknown>>; docs: string } {
+  const docs: string[] = [];
+  const specs = tools.map((t) => {
+    const name = t.function?.name || t.name;
+    let description = t.function?.description || t.description || "";
+    if (!description.trim()) description = `Tool: ${name}`;
+    if (description.length > KIRO_TOOL_DESC_MAX) {
+      docs.push(`## Tool: ${name}\n\n${description}`);
+      description = `[Full documentation in system prompt under '## Tool: ${name}']`;
+    }
+    return {
+      toolSpecification: {
+        name,
+        description,
+        inputSchema: {
+          json: normalizeKiroToolSchema(
+            t.function?.parameters || t.parameters || t.input_schema || {}
+          ),
+        },
+      },
+    };
+  });
+  return { specs, docs: docs.join("\n\n---\n\n") };
+}
+
+function isTextOnlyAssistant(msg): boolean {
+  return (
+    msg?.role === "assistant" &&
+    !(Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) &&
+    !(Array.isArray(msg.content) && msg.content.some((c) => c?.type === "tool_use"))
+  );
+}
+
+function carriesToolResults(msg): boolean {
+  return Array.isArray(msg?.content) && msg.content.some((c) => c?.type === "tool_result");
+}
+
+/**
+ * Is the text-only assistant message at `index` inside a batch of tool results, that is, does
+ * another result of the same tool turn follow before real user text or a new tool-call turn?
+ */
+function hasFollowingToolResult(messages, index: number): boolean {
+  for (let j = index + 1; j < messages.length; j++) {
+    const next = messages[j];
+    if (next?.role === "tool") return true;
+    if (next?.role === "user") {
+      if (!carriesToolResults(next)) return false;
+      const hasText = next.content.some(
+        (c) => (c?.type === "text" || c?.text) && String(c.text || "").trim()
+      );
+      return !hasText;
+    }
+    if (isTextOnlyAssistant(next)) continue;
+    return false;
+  }
+  return false;
+}
+
+function assistantText(msg): string {
+  if (typeof msg.content === "string") return msg.content.trim();
+  if (!Array.isArray(msg.content)) return "";
+  return msg.content
+    .filter((c) => c?.type === "text")
+    .map((c) => c.text || "")
+    .join("\n")
+    .trim();
+}
+
 function convertMessages(messages, tools, model) {
   let history = [];
   let currentMessage = null;
@@ -82,6 +165,10 @@ function convertMessages(messages, tools, model) {
   let pendingUserContent = [];
   let pendingAssistantContent = [];
   let pendingToolResults = [];
+  // Assistant text that arrived between the results of one tool turn. Kiro wants all results
+  // of a tool turn in one user message (otherwise 400 "Expected toolResult blocks"), so the text
+  // waits and becomes its own assistant turn right after the results.
+  let deferredAssistantContent: string[] = [];
   let pendingImages: Array<{ format: string; source: { bytes: string } }> = [];
   // Earlier reasoning for the next assistant history entry: signed text, or Kiro's encrypted
   // (redacted) reasoning.
@@ -89,11 +176,39 @@ function convertMessages(messages, tools, model) {
   let currentRole = null;
   let toolsAttached = false;
 
-  // Only Claude models support images in Kiro. Kiro also routes non-Claude
-  // models (deepseek, minimax, glm, qwen3-coder-next) that do not accept image
-  // attachments — gate image extraction behind a Claude check so we never
-  // attach images those models would reject.
-  const supportsImages = typeof model === "string" && model.toLowerCase().includes("claude");
+  // Kiro serves models that see (Claude, GPT-5.6) and text-only ones (DeepSeek, MiniMax, GLM,
+  // Qwen Coder). The capability data decides; a model whose data says it cannot see gets an error
+  // naming it, never a request with the images quietly left out.
+  const modelSeesImages =
+    getResolvedModelCapabilities({ provider: "kiro", model: String(model || "") })
+      .supportsVision !== false;
+  const addImage = (block) => {
+    if (!block || typeof block !== "object") return false;
+    let url = "";
+    if (block.type === "image_url") url = block.image_url?.url || "";
+    else if (block.type === "image" && typeof block.image === "string") url = block.image;
+    else if (block.type === "image" && block.source?.type === "base64") {
+      if (!modelSeesImages) throw new ImageInputError(modelCannotSeeMessage(model));
+      const format = (block.source.media_type || "image/jpeg").split("/")[1] || "jpeg";
+      if (block.source.data) pendingImages.push({ format, source: { bytes: block.source.data } });
+      return true;
+    } else if (block.type === "image") {
+      throw new ImageInputError(
+        "An image in this request has a source Kiro cannot take (only base64 data and image URLs work)."
+      );
+    } else return false;
+    if (!modelSeesImages) throw new ImageInputError(modelCannotSeeMessage(model));
+    if (!url.startsWith("data:")) {
+      // Image URLs are downloaded before translation (inlineRemoteImages); one left here could
+      // not be, and Kiro takes inline bytes only.
+      throw new ImageInputError("An image given by URL could not be sent; send it as base64 data.");
+    }
+    const [header, bytes] = url.split(",", 2);
+    const mediaType = header.split(";")[0].replace("data:", "");
+    const format = mediaType.split("/")[1] || "jpeg";
+    if (bytes) pendingImages.push({ format, source: { bytes } });
+    return true;
+  };
 
   const flushPending = () => {
     if (currentRole === "user") {
@@ -145,41 +260,14 @@ function convertMessages(messages, tools, model) {
         if (!userMsg.userInputMessage.userInputMessageContext) {
           userMsg.userInputMessage.userInputMessageContext = {};
         }
-        // Kiro API rejects requests with tool descriptions > ~10000 chars.
-        // Move long descriptions to system prompt (same approach as kiro-gateway).
-        const TOOL_DESC_MAX = 10000;
-        const toolDocs: string[] = [];
-        userMsg.userInputMessage.userInputMessageContext.tools = tools.map((t) => {
-          const name = t.function?.name || t.name;
-          let description = t.function?.description || t.description || "";
-
-          if (!description.trim()) {
-            description = `Tool: ${name}`;
-          }
-
-          if (description.length > TOOL_DESC_MAX) {
-            toolDocs.push(`## Tool: ${name}\n\n${description}`);
-            description = `[Full documentation in system prompt under '## Tool: ${name}']`;
-          }
-
-          return {
-            toolSpecification: {
-              name,
-              description,
-              inputSchema: {
-                json: normalizeKiroToolSchema(
-                  t.function?.parameters || t.parameters || t.input_schema || {}
-                ),
-              },
-            },
-          };
-        });
+        const built = buildKiroToolSpecs(tools);
+        userMsg.userInputMessage.userInputMessageContext.tools = built.specs;
         // The long descriptions go into this first user turn: the system prompt's own turn when
         // there is one (the descriptions point there), which stays the same for the whole
         // session, so Kiro caches it. They used to ride on the current message only and were
         // lost in every conversation with history (Claude Code's Bash tool: 10,748 characters).
-        if (toolDocs.length > 0) {
-          userMsg.userInputMessage.content = `${userMsg.userInputMessage.content}\n\n# Tool Documentation\n\n${toolDocs.join("\n\n---\n\n")}`;
+        if (built.docs) {
+          userMsg.userInputMessage.content = `${userMsg.userInputMessage.content}\n\n# Tool Documentation\n\n${built.docs}`;
         }
         toolsAttached = true;
       }
@@ -189,6 +277,17 @@ function convertMessages(messages, tools, model) {
       pendingUserContent = [];
       pendingToolResults = [];
       pendingImages = [];
+
+      // The tool-result batch is closed: the text held back from inside it follows as its own
+      // assistant turn.
+      if (deferredAssistantContent.length > 0) {
+        history.push({
+          assistantResponseMessage: {
+            content: deferredAssistantContent.join("\n\n").trim() || "(empty)",
+          },
+        });
+        deferredAssistantContent = [];
+      }
     } else if (currentRole === "assistant") {
       const content = pendingAssistantContent.join("\n\n").trim() || "(empty)";
       // Earlier thinking goes back with its signature, in the shape of AWS's CodeWhisperer
@@ -222,6 +321,32 @@ function convertMessages(messages, tools, model) {
       role = "user";
     }
 
+    // A text-only assistant message between two results of the same tool turn would split the
+    // results over two user turns, and Kiro answers 400 "Expected toolResult blocks" for the
+    // tool uses the first one lacks. Hold the text back until the batch is complete.
+    if (
+      isTextOnlyAssistant(msg) &&
+      currentRole === "user" &&
+      pendingToolResults.length > 0 &&
+      hasFollowingToolResult(messages, i)
+    ) {
+      const text = assistantText(msg);
+      if (text) deferredAssistantContent.push(text);
+      continue;
+    }
+
+    // After held-back text, the batch ends with the first message that is no tool result: close
+    // it first, so new user text opens its own turn after the held-back assistant turn.
+    if (
+      deferredAssistantContent.length > 0 &&
+      currentRole === "user" &&
+      msg.role !== "tool" &&
+      !carriesToolResults(msg)
+    ) {
+      flushPending();
+      currentRole = null;
+    }
+
     // If role changes, flush pending
     if (role !== currentRole && currentRole !== null) {
       flushPending();
@@ -239,33 +364,8 @@ function convertMessages(messages, tools, model) {
           .map((c) => c.text || "");
         content = textParts.join("\n");
 
-        // Extract images (OpenAI image_url and Anthropic image formats).
-        // Skip entirely for models that do not support images — see supportsImages.
-        for (const block of msg.content) {
-          if (supportsImages && block.type === "image_url") {
-            const url: string = block.image_url?.url || "";
-            if (url.startsWith("data:")) {
-              // data:image/jpeg;base64,<data>
-              const [header, bytes] = url.split(",", 2);
-              const mediaType = header.split(";")[0].replace("data:", ""); // e.g. "image/jpeg"
-              const format = mediaType.split("/")[1] || "jpeg";
-              if (bytes) pendingImages.push({ format, source: { bytes } });
-            }
-          } else if (supportsImages && block.type === "image" && block.source?.type === "base64") {
-            const format = (block.source.media_type || "image/jpeg").split("/")[1] || "jpeg";
-            if (block.source.data)
-              pendingImages.push({ format, source: { bytes: block.source.data } });
-          } else if (supportsImages && block.type === "image" && typeof block.image === "string") {
-            // AI SDK-style image part: { type: "image", image: "data:...;base64,..." }
-            const url = block.image;
-            if (url.startsWith("data:")) {
-              const [header, bytes] = url.split(",", 2);
-              const mediaType = header.split(";")[0].replace("data:", "");
-              const format = mediaType.split("/")[1] || "jpeg";
-              if (bytes) pendingImages.push({ format, source: { bytes } });
-            }
-          }
-        }
+        // Images: carried to a model that sees, refused by name otherwise (see addImage).
+        for (const block of msg.content) addImage(block);
 
         // Check for tool_result blocks
         const toolResultBlocks = msg.content.filter((c) => c.type === "tool_result");
@@ -287,6 +387,8 @@ function convertMessages(messages, tools, model) {
         // blocks, images) is never collapsed to an empty string. CodeWhisperer rejects a
         // toolResult whose content is [{ text: "" }] with 400 "Improperly formed request"
         // — the same failure mode that hit the Anthropic tool_result path.
+        // Kiro's toolResult takes text only; images the tool returned were already added to the
+        // turn's images above (a tool message is a user turn here).
         const toolContent = serializeToolResultContent(msg.content);
         pendingToolResults.push({
           toolUseId: msg.tool_call_id,
@@ -434,21 +536,14 @@ function convertMessages(messages, tools, model) {
     if (!currentMessage.userInputMessage.userInputMessageContext) {
       currentMessage.userInputMessage.userInputMessageContext = {};
     }
-    currentMessage.userInputMessage.userInputMessageContext.tools = tools.map((t) => {
-      const name = t.function?.name || t.name;
-      const description = t.function?.description || t.description || `Tool: ${name}`;
-      return {
-        toolSpecification: {
-          name,
-          description,
-          inputSchema: {
-            json: normalizeKiroToolSchema(
-              t.function?.parameters || t.parameters || t.input_schema || {}
-            ),
-          },
-        },
-      };
-    });
+    // Same specs as on the first user turn: a description over the limit would get a 400 here
+    // too, so its text goes into this message's content instead.
+    const built = buildKiroToolSpecs(tools);
+    currentMessage.userInputMessage.userInputMessageContext.tools = built.specs;
+    if (built.docs) {
+      const content = currentMessage.userInputMessage.content || "";
+      currentMessage.userInputMessage.content = `${content}\n\n# Tool Documentation\n\n${built.docs}`;
+    }
     toolsAttached = true;
   }
 
@@ -561,6 +656,28 @@ function convertMessages(messages, tools, model) {
       configurable: true,
     });
     mergedHistory.unshift(syntheticUserTurn);
+  }
+
+  // A tool use that no result answers anywhere (a client that lost one of
+  // two parallel results, or a conversation that ends on the tool call) gets the same 400
+  // "Expected toolResult blocks". Such a tool use is dropped; its assistant text stays.
+  const answeredToolUseIds = new Set<string>();
+  for (const item of [...mergedHistory, currentMessage]) {
+    const results = item?.userInputMessage?.userInputMessageContext?.toolResults;
+    if (!Array.isArray(results)) continue;
+    for (const result of results) {
+      if (result?.toolUseId) answeredToolUseIds.add(result.toolUseId);
+    }
+  }
+  for (const item of mergedHistory) {
+    const toolUses = item.assistantResponseMessage?.toolUses;
+    if (!Array.isArray(toolUses)) continue;
+    const answered = toolUses.filter(
+      (use) => use?.toolUseId && answeredToolUseIds.has(use.toolUseId)
+    );
+    if (answered.length === toolUses.length) continue;
+    if (answered.length > 0) item.assistantResponseMessage.toolUses = answered;
+    else delete item.assistantResponseMessage.toolUses;
   }
 
   // Ensure assistant exists before toolResults. Kiro API validates that every
@@ -944,11 +1061,17 @@ export function buildKiroPayload(model, body, stream, credentials) {
     payload.profileArn = profileArn;
   }
 
-  if (maxTokens || temperature !== undefined || topP !== undefined) {
+  // The Claude models that refuse sampling fields (Claude 5.x, Opus 4.7 and later, Fable,
+  // Mythos: the same set the Claude provider strips them for) never get them, with or without
+  // an effort. Models that take them (GPT-5.6, the 4.5 models) keep the client's values.
+  const samplingAllowed = !modelRefusesSamplingParams(normalizedModel);
+  const sendTemperature = samplingAllowed && temperature !== undefined;
+  const sendTopP = samplingAllowed && topP !== undefined;
+  if (maxTokens || sendTemperature || sendTopP) {
     payload.inferenceConfig = {};
     if (maxTokens) payload.inferenceConfig.maxTokens = maxTokens;
-    if (temperature !== undefined) payload.inferenceConfig.temperature = temperature;
-    if (topP !== undefined) payload.inferenceConfig.topP = topP;
+    if (sendTemperature) payload.inferenceConfig.temperature = temperature;
+    if (sendTopP) payload.inferenceConfig.topP = topP;
   }
 
   // Thinking mode for Claude models on Kiro (ported from javargasm/pi-kiro).

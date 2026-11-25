@@ -26,6 +26,7 @@ import { recordProviderQuotaResetEventIfChanged } from "@/lib/db/quotaResetEvent
 import { getCodexQuotaWindowFilterForModel } from "@trouteai/open-sse/config/codexQuotaScopes.ts";
 import { getAntigravityQuotaFamily } from "@trouteai/open-sse/services/antigravityQuotaFamily.ts";
 import { isClaudeOverageAllowed } from "@/lib/providers/claudeExtraUsage";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -76,7 +77,8 @@ export const DEFAULT_QUOTA_THRESHOLD_PERCENT = 99;
 interface QuotaCacheState {
   cache: Map<string, QuotaCacheEntry>;
   refreshingSet: Set<string>;
-  refreshTimer: ReturnType<typeof setInterval> | null;
+  /** Stops the background refresh; null while it is not running. */
+  refreshTimer: (() => void) | null;
   tickRunning: boolean;
 }
 
@@ -934,8 +936,13 @@ async function backgroundRefreshTick() {
 export function startBackgroundRefresh() {
   const state = getState();
   if (state.refreshTimer) return;
-  state.refreshTimer = setInterval(backgroundRefreshTick, REFRESH_INTERVAL_MS);
-  state.refreshTimer?.unref?.();
+  // Pauses while the server is idle: a used-up window is already let through once its reset
+  // time has passed (advancedWindowResetAt), so nothing waits on this refresh then.
+  state.refreshTimer = setIdleAwareInterval(
+    "quota-cache-refresh",
+    backgroundRefreshTick,
+    REFRESH_INTERVAL_MS
+  );
 }
 
 /**
@@ -944,7 +951,7 @@ export function startBackgroundRefresh() {
 export function stopBackgroundRefresh() {
   const state = getState();
   if (state.refreshTimer) {
-    clearInterval(state.refreshTimer);
+    state.refreshTimer();
     state.refreshTimer = null;
   }
 }

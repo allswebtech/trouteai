@@ -5,6 +5,7 @@ import { synthesizeOpenAiSseFromJson } from "../../utils/jsonToSse.ts";
 import { attachTRouteAIMetaHeaders } from "@/domain/trouteaiResponseMeta";
 import { extractUsageFromResponse } from "../usageExtractor.ts";
 import { TROUTEAI_RESPONSE_HEADERS } from "@/shared/constants/headers";
+import { echoModelInObject } from "../../services/responseModelEcho.ts";
 
 export async function checkSemanticCache({
   semanticCacheEnabled,
@@ -20,6 +21,8 @@ export async function checkSemanticCache({
   log,
   persistAttemptLogs,
   apiKeyId,
+  echoModel = null,
+  requestedModel = null,
 }: {
   semanticCacheEnabled: boolean;
   // Only the fields this read path actually touches are named; everything else
@@ -36,6 +39,10 @@ export async function checkSemanticCache({
   log: { debug?: (...args: unknown[]) => void } | null;
   persistAttemptLogs: (args: unknown) => void;
   apiKeyId?: string | null;
+  /** The name to answer with (the client's own string), or null to keep the stored one. */
+  echoModel?: string | null;
+  /** The model string the client sent, for the routing headers. */
+  requestedModel?: string | null;
 }) {
   if (semanticCacheEnabled && isCacheableForRead(body, clientRawRequest?.headers)) {
     const signature = generateSignature(
@@ -45,8 +52,11 @@ export async function checkSemanticCache({
       body.top_p,
       apiKeyId ?? undefined
     );
-    const cached = getCachedResponse(signature);
-    if (cached) {
+    const stored = getCachedResponse(signature);
+    if (stored) {
+      // The store keeps one object for every hit and other clients may have asked under
+      // another name: answer with a copy that carries this client's name.
+      const cached = echoModel ? echoModelInObject(structuredClone(stored), echoModel) : stored;
       log?.debug?.("CACHE", `Semantic cache HIT for ${model} (stream=${stream})`);
       reqLogger.logConvertedResponse(cached as Record<string, unknown>);
       const cachedUsage =
@@ -78,6 +88,7 @@ export async function checkSemanticCache({
       attachTRouteAIMetaHeaders(headers, {
         provider,
         model,
+        requestedModel,
         cacheHit: true,
         latencyMs: Date.now() - startTime,
         usage: cachedUsage,

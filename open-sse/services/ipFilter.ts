@@ -6,6 +6,7 @@
 
 import { isIP } from "node:net";
 import { getDbInstance } from "../../src/lib/db/core.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 // In-memory IP lists
 let _config = {
@@ -67,16 +68,19 @@ function persist() {
   }
 }
 
-const _tempBanSweep = setInterval(() => {
-  const now = Date.now();
-  const bans = _config.tempBans as Map<string, { until: number; reason: string }>;
-  for (const [ip, entry] of bans) {
-    if (now >= entry.until) bans.delete(ip);
-  }
-}, 60_000);
-if (typeof _tempBanSweep === "object" && "unref" in _tempBanSweep) {
-  (_tempBanSweep as { unref?: () => void }).unref?.();
-}
+// Pauses while the server is idle: entries are only added by requests, and the next request
+// runs the sweep again.
+setIdleAwareInterval(
+  "ipFilter-sweep",
+  () => {
+    const now = Date.now();
+    const bans = _config.tempBans as Map<string, { until: number; reason: string }>;
+    for (const [ip, entry] of bans) {
+      if (now >= entry.until) bans.delete(ip);
+    }
+  },
+  60_000
+);
 
 /**
  * Configure the IP filter

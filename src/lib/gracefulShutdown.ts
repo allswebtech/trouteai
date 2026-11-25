@@ -14,8 +14,14 @@
 
 import { markServerStopping } from "@/lib/serverLifecycle";
 
-/** Grace period before forced exit (default 30s, configurable) */
-const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS || "30000", 10);
+/**
+ * How long open requests may finish after a stop signal (default 7 s, SHUTDOWN_TIMEOUT_MS
+ * changes it). Supervisors kill a process that does not stop in time (10 s is a common limit),
+ * so the default drain plus the close steps below stays under 10 s even with a stream open.
+ */
+const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS || "7000", 10);
+/** Longest wait for Next.js to close once the drain is over. */
+const CLOSE_NEXT_TIMEOUT_MS = 1000;
 
 declare global {
   var __trouteaiShutdown:
@@ -27,7 +33,11 @@ declare global {
    * so it hands the handles over via globalThis instead.
    */
   var __trouteaiServerHandles:
-    | { closeServer?: () => Promise<void>; closeNext?: () => Promise<void> }
+    | {
+        closeServer?: () => Promise<void>;
+        closeNext?: () => Promise<void>;
+        closeConnections?: () => void;
+      }
     | undefined;
 }
 
@@ -40,6 +50,7 @@ declare global {
 export function registerServerHandles(handles: {
   closeServer?: () => Promise<void>;
   closeNext?: () => Promise<void>;
+  closeConnections?: () => void;
 }): void {
   globalThis.__trouteaiServerHandles = handles;
 }
@@ -157,28 +168,36 @@ export function initGracefulShutdown(): void {
 
     console.log(`\n[Shutdown] Received ${signal}. Draining ${state.activeRequests} request(s)...`);
 
-    // Stop accepting NEW connections first (markServerStopping + isDraining
-    // already 503 new /api requests), then let in-flight requests finish,
-    // then tear Next and the data layer down. server.close() resolves only
-    // once existing connections end, so run it concurrently with the drain
-    // poll under the same timeout rather than serially before it.
-    const handles = globalThis.__trouteaiServerHandles;
-    const serverClosed = handles?.closeServer
-      ? handles.closeServer().catch((err) => {
-          console.error("[Shutdown] Error closing HTTP server:", (err as Error).message);
-        })
-      : Promise.resolve();
+    // Whatever happens below (a hung close, a stuck clean-up), the process ends in time.
+    const hardExit = setTimeout(() => {
+      console.warn("[Shutdown] Clean-up took too long. Exiting now.");
+      process.exit(0);
+    }, SHUTDOWN_TIMEOUT_MS + 2500);
+    hardExit.unref?.();
 
-    await Promise.race([
-      Promise.all([waitForDrain(), serverClosed]),
-      // Hard ceiling so a stuck server.close() (lingering keep-alive socket)
-      // cannot outlast the drain budget; waitForDrain already self-limits.
-      new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_TIMEOUT_MS + 1000)),
-    ]);
+    // Keep listening while open requests finish: new /api and /v1 requests get the 503
+    // "draining" answer from the authz pipeline and /healthz answers 503 "stopping", so a
+    // supervisor or a load balancer sees the stop instead of a refused connection. The
+    // listeners close when the drain is over (or its time is up).
+    const handles = globalThis.__trouteaiServerHandles;
+    await waitForDrain();
+    // server.close() resolves only when the last connection ends; the cut below ends them.
+    void handles?.closeServer?.().catch((err) => {
+      console.error("[Shutdown] Error closing HTTP server:", (err as Error).message);
+    });
+
+    // Requests still open after the drain (a long stream) are cut here. The client sees a
+    // broken stream, never a normal finish, so it knows the answer is incomplete.
+    try {
+      handles?.closeConnections?.();
+    } catch {}
 
     if (handles?.closeNext) {
       try {
-        await handles.closeNext();
+        await Promise.race([
+          handles.closeNext(),
+          new Promise<void>((resolve) => setTimeout(resolve, CLOSE_NEXT_TIMEOUT_MS)),
+        ]);
       } catch (err) {
         console.error("[Shutdown] Error closing Next app:", (err as Error).message);
       }

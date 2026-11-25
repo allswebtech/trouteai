@@ -13,6 +13,7 @@
 import { getDbInstance } from "./db/core";
 import { invalidateDbCache } from "./db/readCache";
 import { backupDbFile } from "./db/backup";
+import { runUnlessIdle } from "@/lib/idleState";
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -426,32 +427,40 @@ export function startPeriodicSync(intervalMs?: number): void {
   activeSyncIntervalMs = interval;
   console.log(`[PRICING_SYNC] Starting periodic sync every ${interval / 1000}s`);
 
-  // Initial sync (non-blocking)
-  syncPricingFromSources()
-    .then((result) => {
-      if (result.success) {
-        console.log(
-          `[PRICING_SYNC] Initial sync complete: ${result.modelCount} models from ${result.providerCount} providers`
-        );
-      }
-    })
-    .catch((err) => {
-      console.warn("[PRICING_SYNC] Initial sync error:", err instanceof Error ? err.message : err);
-    });
-
-  syncTimer = setInterval(() => {
+  // Initial sync (non-blocking). Like every run, it waits for the next request while the
+  // server is idle.
+  runUnlessIdle("pricing-sync", () =>
     syncPricingFromSources()
       .then((result) => {
         if (result.success) {
-          console.log(`[PRICING_SYNC] Periodic sync complete: ${result.modelCount} models`);
+          console.log(
+            `[PRICING_SYNC] Initial sync complete: ${result.modelCount} models from ${result.providerCount} providers`
+          );
         }
       })
       .catch((err) => {
         console.warn(
-          "[PRICING_SYNC] Periodic sync error:",
+          "[PRICING_SYNC] Initial sync error:",
           err instanceof Error ? err.message : err
         );
-      });
+      })
+  );
+
+  syncTimer = setInterval(() => {
+    runUnlessIdle("pricing-sync", () =>
+      syncPricingFromSources()
+        .then((result) => {
+          if (result.success) {
+            console.log(`[PRICING_SYNC] Periodic sync complete: ${result.modelCount} models`);
+          }
+        })
+        .catch((err) => {
+          console.warn(
+            "[PRICING_SYNC] Periodic sync error:",
+            err instanceof Error ? err.message : err
+          );
+        })
+    );
   }, interval);
 
   if (syncTimer && typeof syncTimer === "object" && "unref" in syncTimer) {

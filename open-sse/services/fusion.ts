@@ -7,7 +7,8 @@
  *   - quorum-grace collection caps the straggler penalty (the slowest model
  *     otherwise dominates wall time);
  *   - anonymized sources prevent judge brand-bias ("Source N" rather than model name);
- *   - degrades to a direct answer on a single survivor, 503 on total failure.
+ *   - degrades to a direct answer on a single survivor; on total failure it answers by the
+ *     combo rule (comboFinalStatus): any outage is a 5xx, all limited is a 429 with the reset.
  *
  * Per OpenRouter's Fusion design, the judge does NOT merge — it analyzes
  * (consensus / contradictions / partial coverage / unique insights / blind spots)
@@ -19,8 +20,11 @@
  * combo.config.fusionTuning).
  */
 import { errorResponse, sanitizeErrorMessage } from "../utils/error.ts";
+import { withTRouteAIRoutingHeaders } from "@/domain/trouteaiResponseMeta";
+import { runAsAnswerFallback } from "./answerFallbackContext.ts";
 import { extractTextContent } from "../translator/helpers/geminiHelper.ts";
 import type { ComboLogger, HandleSingleModel } from "./combo/types.ts";
+import { comboFailureResponse, type ComboFailedAttempt } from "./combo/finalStatus.ts";
 
 // Fusion tuning. Overridable per-combo via combo.config.fusionTuning.
 export const FUSION_DEFAULTS = {
@@ -323,18 +327,23 @@ export async function handleFusionChat({
   // 2. Collect successful answers + per-member failure reasons.
   const answers: Array<{ model: string; text: string }> = [];
   const failures: Array<{ model: string; reason: string }> = [];
+  // the status of each failed member (a time-out is a 504, a broken answer a 502), for the
+  // final answer when no member answered
+  const failedAttempts: ComboFailedAttempt[] = [];
   for (let i = 0; i < settled.length; i++) {
     const res = settled[i];
     const model = panel[i];
     if (!res) {
       log.warn("FUSION", `Panel ${model} dropped (straggler/timeout)`);
       failures.push({ model, reason: "straggler_dropped" });
+      failedAttempts.push({ status: 504 });
       continue;
     }
     const sentinel = res as Sentinel;
     if (sentinel.__timeout) {
       log.warn("FUSION", `Panel ${model} timed out`);
       failures.push({ model, reason: "timeout" });
+      failedAttempts.push({ status: 504 });
       continue;
     }
     if (sentinel.__error) {
@@ -342,6 +351,7 @@ export async function handleFusionChat({
         error: sanitizeErrorMessage(sentinel.__error as Error),
       });
       failures.push({ model, reason: "threw" });
+      failedAttempts.push({ status: 502 });
       continue;
     }
     const resp = res as Response;
@@ -350,6 +360,7 @@ export async function handleFusionChat({
       // rate-limit fan-fail, status_503 for an outage) — strictly more
       // informative than the earlier aggregate rate-limit count.
       failures.push({ model, reason: `status_${resp.status}` });
+      failedAttempts.push({ status: resp.status, response: resp });
       log.warn("FUSION", `Panel ${model} ${resp.status === 429 ? "rate-limited" : "failed"}`, {
         status: resp.status,
       });
@@ -364,25 +375,26 @@ export async function handleFusionChat({
       } else {
         log.warn("FUSION", `Panel ${model} returned empty content`);
         failures.push({ model, reason: "empty_content" });
+        failedAttempts.push({ status: 502 });
       }
     } catch (e) {
       log.warn("FUSION", `Panel ${model} unparseable`, {
         error: sanitizeErrorMessage(e as Error),
       });
       failures.push({ model, reason: "unparseable" });
+      failedAttempts.push({ status: 502 });
     }
   }
 
   // 3. Degrade gracefully when the panel is too thin to fuse.
   if (answers.length === 0) {
     // Surface per-member reasons so operators can distinguish a rate-limit
-    // fan-fail (reason=rate_limited) from an outage. This supersedes
-    // the earlier aggregate "N rate-limited, M failed" summary — per-member is
-    // strictly more informative. Still routed through errorResponse for sanitization.
+    // fan-fail (reason=status_429) from an outage. The message is sanitized by
+    // buildErrorBody, and the status follows the combo rule.
     const detail = failures.map((f) => `${f.model}=${f.reason}`).join(", ");
     log.warn("FUSION", `No live models: ${detail}`);
-    return errorResponse(
-      503,
+    return comboFailureResponse(
+      failedAttempts,
       detail ? `All fusion panel models failed: ${detail}` : "All fusion panel models failed"
     );
   }
@@ -392,7 +404,17 @@ export async function handleFusionChat({
     // answer directly with the lone survivor.
     if (!hasExplicitJudge) {
       log.info("FUSION", `Only ${answers[0].model} succeeded — answering directly (no fusion)`);
-      return handleSingleModel(body, answers[0].model);
+      // the other panel members failed: one model answers alone, and the answer says so
+      const lone = { fallback: "combo-step", attempts: panel.length - 1 };
+      const loneResponse = await runAsAnswerFallback(lone, () =>
+        handleSingleModel(body, answers[0].model)
+      );
+      return loneResponse.ok
+        ? withTRouteAIRoutingHeaders(loneResponse, {
+            fallback: lone.fallback,
+            fallbackAttempts: lone.attempts,
+          })
+        : loneResponse;
     }
     // An explicit judgeModel IS configured: honor it even with a single
     // surviving panel answer, rather than silently substituting the panel

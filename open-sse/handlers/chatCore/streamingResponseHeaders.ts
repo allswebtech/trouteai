@@ -15,6 +15,9 @@ export function assembleStreamingResponseHeaders(
     providerHeaders: Headers;
     provider: string | null | undefined;
     model: string | null | undefined;
+    requestedModel?: string | null | undefined;
+    fallback?: string | null | undefined;
+    fallbackAttempts?: number;
     pendingRequestId: string;
     compressionResponseMeta?: string | null | undefined;
     comboStrategy?: string | null | undefined;
@@ -25,6 +28,9 @@ export function assembleStreamingResponseHeaders(
     ...buildStreamingResponseHeaders(args.providerHeaders, {
       provider: args.provider,
       model: args.model,
+      requestedModel: args.requestedModel,
+      fallback: args.fallback,
+      fallbackAttempts: args.fallbackAttempts,
       cacheHit: false,
       latencyMs: 0,
       usage: null,

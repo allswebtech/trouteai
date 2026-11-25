@@ -39,6 +39,7 @@ import {
 } from "./fetchGuard";
 import { withRetry } from "./fetchRetry";
 import { parseSubscription, redactedNodeSummary, type ParsedSubscription } from "./parse";
+import { runUnlessIdle } from "@/lib/idleState";
 
 export type ProxySubscriptionMode = "global" | "rule";
 export type ProxySubscriptionStatus = "ok" | "error" | "empty";
@@ -741,7 +742,8 @@ export function startSubscriptionScheduler(): void {
   };
 
   // Check every minute; each subscription self-throttles by its interval.
-  schedulerTimer = setInterval(tick, 60_000);
+  // While the server is idle a due refresh waits for the next request.
+  schedulerTimer = setInterval(() => runUnlessIdle("proxy-subscriptions", tick), 60_000);
   if (typeof schedulerTimer.unref === "function") schedulerTimer.unref();
 }
 

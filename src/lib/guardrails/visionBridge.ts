@@ -56,30 +56,33 @@ async function getComboVisionBridgeDecision(model: string): Promise<ComboVisionB
     const rawModels = (combo as Record<string, unknown>).models;
     if (!Array.isArray(rawModels)) return "process";
 
-    // 4. Check each target for vision support
-    // combo-ref → conservative (process images)
-    // model step with no native vision → process images
-    // all model steps with native vision → safe to skip
-    let hasModelStep = false;
+    // 4. Check each target for vision support. A combo with at least one model step that sees
+    // keeps its images: the combo skips the steps that cannot see and serves the request from
+    // a seeing one, which must get the picture itself, not a description of it. Only a combo
+    // where no step is known to see has its images described.
+    let hasSeeingStep = false;
+    let hasUnknownStep = false;
     for (const step of rawModels) {
       const s = step as Record<string, unknown>;
-      if (s.kind === "combo-ref") return "process";
+      if (s.kind === "combo-ref") {
+        hasUnknownStep = true;
+        continue;
+      }
       if (s.kind === "model") {
-        hasModelStep = true;
         const targetModel = s.model;
-        if (typeof targetModel === "string") {
-          const caps = getResolvedModelCapabilities(targetModel);
-          if (caps.supportsVision !== true) {
-            return "process";
-          }
+        if (
+          typeof targetModel === "string" &&
+          getResolvedModelCapabilities(targetModel).supportsVision === true
+        ) {
+          hasSeeingStep = true;
         } else {
-          return "process";
+          hasUnknownStep = true;
         }
       }
     }
 
-    // All model steps support vision — safe to skip
-    if (hasModelStep) return "skip";
+    if (hasSeeingStep) return "skip";
+    if (hasUnknownStep) return "process";
 
     // No recognizable steps — don't force bridge
     return "not-combo";

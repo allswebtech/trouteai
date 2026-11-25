@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { getIdempotencyKey, checkIdempotency } from "@/lib/idempotencyLayer";
 import { calculateCost } from "@/lib/usage/costCalculator";
 import { attachTRouteAIMetaHeaders } from "@/domain/trouteaiResponseMeta";
+import { echoModelInObject } from "../../services/responseModelEcho.ts";
 import type { EffectiveServiceTier } from "./serviceTier.ts";
 
 type HeadersLike = Headers | Record<string, unknown> | null | undefined;
@@ -59,6 +60,8 @@ export async function checkIdempotencyCache({
   effectiveServiceTier,
   startTime,
   log,
+  echoModel = null,
+  requestedModel = null,
 }: {
   clientRawRequest: IdempotencyRequest;
   provider: string;
@@ -67,6 +70,10 @@ export async function checkIdempotencyCache({
   effectiveServiceTier: EffectiveServiceTier | null | undefined;
   startTime: number;
   log: LoggerLike;
+  /** The name to answer with (the client's own string), or null to keep the stored one. */
+  echoModel?: string | null;
+  /** The model string the client sent, for the routing headers. */
+  requestedModel?: string | null;
 }): Promise<{ hit: { success: true; response: Response } | null; idempotencyKey: string | null }> {
   // NEXA fusion-idempotency fix: namespace the raw header key (see composeIdempotencyKey).
   const rawIdempotencyKey = getIdempotencyKey(clientRawRequest?.headers);
@@ -96,6 +103,7 @@ export async function checkIdempotencyCache({
     attachTRouteAIMetaHeaders(headers, {
       provider,
       model,
+      requestedModel,
       cacheHit: false,
       latencyMs: Date.now() - startTime,
       usage: idempotentUsage,
@@ -105,10 +113,18 @@ export async function checkIdempotencyCache({
       idempotencyKey,
       hit: {
         success: true,
-        response: new Response(JSON.stringify(cachedIdemp.response), {
-          status: cachedIdemp.status,
-          headers,
-        }),
+        // a replay answers under the name this client sent, like the first answer did
+        response: new Response(
+          JSON.stringify(
+            echoModel && cachedIdemp.response && typeof cachedIdemp.response === "object"
+              ? echoModelInObject(structuredClone(cachedIdemp.response), echoModel)
+              : cachedIdemp.response
+          ),
+          {
+            status: cachedIdemp.status,
+            headers,
+          }
+        ),
       },
     };
   }

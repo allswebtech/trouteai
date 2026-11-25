@@ -208,6 +208,11 @@ curl http://localhost:20017/v1/chat/completions \
 - `model` can be a combo name or a `provider/model` id from `GET /v1/models`
 - Requests without `"stream"` are streamed by default; send `"stream": false` for a JSON reply
   (or switch the key to JSON mode in **API Keys**)
+- When every slot of a round-robin combo is in use, a request waits for the first slot that
+  frees, up to the combo's queue timeout (default 120 seconds); after that it gets a 429 that
+  says the gateway is busy, with a `Retry-After`. The header
+  `x-trouteai-priority: interactive` or `background` puts a request ahead of or behind the
+  others while it waits (anything else counts as normal); with free slots it changes nothing
 
 The sidebar starts with a **simple menu** (main pages only). Use **Show all menus** at the
 bottom of the sidebar to see every page.

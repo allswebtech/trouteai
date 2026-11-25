@@ -249,6 +249,27 @@ export function filterUsageForFormat(usage, targetFormat) {
     ],
   };
 
+  // Cache figures under the target dialect's own names, so they survive the field filter
+  // below (a Claude upstream's cache_read_input_tokens otherwise vanished for OpenAI clients).
+  const cacheRead = convertedUsage.cache_read_input_tokens ?? convertedUsage.cached_tokens;
+  const cacheWrite = convertedUsage.cache_creation_input_tokens;
+  const detailsKey =
+    targetFormat === FORMATS.OPENAI_RESPONSES || targetFormat === FORMATS.OPENAI_RESPONSE
+      ? "input_tokens_details"
+      : targetFormat === FORMATS.CLAUDE ||
+          targetFormat === FORMATS.GEMINI ||
+          targetFormat === FORMATS.ANTIGRAVITY
+        ? null
+        : "prompt_tokens_details";
+  if (detailsKey && (cacheRead > 0 || cacheWrite > 0)) {
+    const details = { ...(convertedUsage[detailsKey] || {}) };
+    if (cacheRead > 0 && details.cached_tokens === undefined) details.cached_tokens = cacheRead;
+    if (cacheWrite > 0 && details.cache_creation_tokens === undefined) {
+      details.cache_creation_tokens = cacheWrite;
+    }
+    convertedUsage[detailsKey] = details;
+  }
+
   // Get fields for target format
   let fields = formatFields[targetFormat];
 

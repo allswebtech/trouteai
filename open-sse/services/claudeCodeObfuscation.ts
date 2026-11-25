@@ -87,9 +87,17 @@ export function obfuscateInBody(body: Record<string, unknown>): void {
       if (typeof content === "string") {
         msg.content = obfuscateSensitiveWords(content);
       } else if (Array.isArray(content)) {
-        for (const block of content as Array<Record<string, unknown>>) {
-          if (typeof block.text === "string") {
-            block.text = obfuscateSensitiveWords(block.text);
+        // The service checks a signature over a turn that carries thinking; changing a text
+        // block next to it gives "Invalid signature in thinking block" on the next request.
+        const blocks = content as Array<Record<string, unknown>>;
+        const hasThinking = blocks.some(
+          (block) => block?.type === "thinking" || block?.type === "redacted_thinking"
+        );
+        if (!hasThinking) {
+          for (const block of blocks) {
+            if (typeof block.text === "string") {
+              block.text = obfuscateSensitiveWords(block.text);
+            }
           }
         }
       }

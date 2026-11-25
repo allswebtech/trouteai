@@ -17,6 +17,8 @@ import { getCircuitBreaker } from "../../../src/shared/utils/circuitBreaker";
 import { fisherYatesShuffle, getNextFromDeck } from "../../../src/shared/utils/shuffleDeck";
 import { handleFusionChat, type FusionTuning } from "../fusion.ts";
 import { parseModel } from "../model.ts";
+import { withTRouteAIRoutingHeaders } from "@/domain/trouteaiResponseMeta";
+import { runAsAnswerFallback } from "../answerFallbackContext.ts";
 import { handlePipelineChat, type PipelineStep } from "../pipeline.ts";
 import type { resolveComboSetupConfig } from "../comboConfig.ts";
 import { clampComboDepth, MAX_GLOBAL_ATTEMPTS, resolveDelayMs } from "./comboPredicates.ts";
@@ -254,11 +256,15 @@ export async function tryPinnedModelDispatch(args: {
   // when allCombos is authoritative (non-empty) so we can resolve combo-refs;
   // the auto-combo redirect path passes an empty list and keeps prior behavior.
   const haveFullCombos = Array.isArray(allCombos) ? allCombos.length > 0 : !!allCombos;
-  const pinInCombo =
-    !haveFullCombos ||
-    resolveComboTargets(combo, allCombos, clampComboDepth(config.maxComboDepth)).some(
-      (t) => t.modelStr === pinnedModel
-    );
+  // Only resolved when the combo list is authoritative, as before.
+  const comboTargets = haveFullCombos
+    ? resolveComboTargets(combo, allCombos, clampComboDepth(config.maxComboDepth))
+    : [];
+  const pinInCombo = !haveFullCombos || comboTargets.some((t) => t.modelStr === pinnedModel);
+  // The pin bypasses the strategy: when the pinned model is not the combo's first target, the
+  // answer says so (reason context-pin), like a later target of the shared loop.
+  const pinBypassesFirst = comboTargets.length > 0 && comboTargets[0].modelStr !== pinnedModel;
+  const pinFacts = pinBypassesFirst ? { fallback: "context-pin", attempts: 0 } : null;
   // Honor the pin only if it is still a combo target AND its provider is not
   // DURABLY down. Without the health gate a pin keeps routing a session to a
   // dead/credits-exhausted/throttled account forever (strategy bypassed, no
@@ -273,9 +279,11 @@ export async function tryPinnedModelDispatch(args: {
     );
     let pinnedResult: Response | null = null;
     try {
-      pinnedResult = await handleSingleModelWithTimeout(body, pinnedModel, {
-        modelPinned: true,
-      } as SingleModelTarget);
+      pinnedResult = await runAsAnswerFallback(pinFacts, () =>
+        handleSingleModelWithTimeout(body, pinnedModel, {
+          modelPinned: true,
+        } as SingleModelTarget)
+      );
     } catch (pinErr) {
       log.warn(
         "COMBO",
@@ -290,7 +298,11 @@ export async function tryPinnedModelDispatch(args: {
         config,
         log,
       });
-      if (accepted) return accepted;
+      if (accepted) {
+        return pinFacts && accepted.ok
+          ? withTRouteAIRoutingHeaders(accepted, { fallback: pinFacts.fallback })
+          : accepted;
+      }
     }
     // Fall through to the target iteration loop below — retries and sibling
     // models will be tried via the normal combo machinery.

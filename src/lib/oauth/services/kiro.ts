@@ -20,6 +20,12 @@ import {
 
 const KIRO_AUTH_SERVICE = "https://prod.us-east-1.auth.desktop.kiro.dev";
 
+/** Region value that asks the API-key import to find the key's region itself. */
+export const KIRO_API_KEY_AUTO_REGION = "auto";
+/** Regions that host Kiro's Q profiles, in the order an API key is tried. */
+const KIRO_API_KEY_REGIONS = ["us-east-1", "eu-central-1"] as const;
+const KIRO_API_KEY_PROBE_TIMEOUT_MS = 10_000;
+
 /** Kiro auth failure with the HTTP status an API route should return. */
 export class KiroAuthError extends Error {
   readonly status: number;
@@ -537,6 +543,7 @@ export class KiroService {
         tokentype: "API_KEY",
       },
       body: JSON.stringify({ maxResults: 10 }),
+      signal: AbortSignal.timeout(KIRO_API_KEY_PROBE_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -554,17 +561,70 @@ export class KiroService {
   }
 
   /**
-   * Normalize a long-lived Kiro/CodeWhisperer API key.
+   * HTTP status of Kiro's model list (`q.{region}/ListAvailableModels`, the host model discovery
+   * uses) for a long-lived API key, 0 when the host could not be reached. The body is not read.
+   */
+  async probeApiKeyModels(apiKey: string, region: string): Promise<number> {
+    assertValidAwsRegion(region);
+    try {
+      const response = await fetch(
+        `https://q.${region}.amazonaws.com/ListAvailableModels?origin=AI_EDITOR`,
+        {
+          method: "GET",
+          headers: {
+            ...getKiroUserAgentHeaders("runtime", getKiroMachineId(undefined, apiKey)),
+            Authorization: `Bearer ${apiKey}`,
+            Accept: "application/json",
+            tokentype: "API_KEY",
+          },
+          signal: AbortSignal.timeout(KIRO_API_KEY_PROBE_TIMEOUT_MS),
+        }
+      );
+      await response.body?.cancel().catch(() => undefined);
+      return response.status;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * The Q profile region where a long-lived API key works, found by asking each region's model
+   * list in turn (us-east-1, then eu-central-1). Throws when no region accepts the key.
+   */
+  async detectApiKeyRegion(apiKey: string): Promise<string> {
+    const failures: string[] = [];
+    let rejected = false;
+    for (const region of KIRO_API_KEY_REGIONS) {
+      const status = await this.probeApiKeyModels(apiKey, region);
+      if (status >= 200 && status < 300) return region;
+      if (status === 401 || status === 403) rejected = true;
+      failures.push(`${region}: ${status === 0 ? "unreachable" : `HTTP ${status}`}`);
+    }
+    const detail = failures.join(", ");
+    throw new Error(
+      rejected
+        ? `Invalid Kiro API key: Kiro rejected the key (${detail})`
+        : `Kiro API key validation failed: Kiro unavailable (${detail})`
+    );
+  }
+
+  /**
+   * Normalize a long-lived Kiro/CodeWhisperer API key. Region "auto" finds the key's region
+   * first (detectApiKeyRegion); a named region is used as given.
    */
   async validateApiKey(apiKey: string, regionInput?: string) {
-    // Default kept OUT of the parameter list: check-public-creds' CRED_KEY_RE matches the
-    // `apiKey:` annotation and flags any string literal in the signature (fn-param FP class).
-    const region = regionInput || "us-east-1";
-    assertValidAwsRegion(region);
-    const accessToken = apiKey.trim();
+    const accessToken = typeof apiKey === "string" ? apiKey.trim() : "";
     if (!accessToken) {
       throw new Error("API key is required");
     }
+    // Default kept OUT of the parameter list: check-public-creds' CRED_KEY_RE matches the
+    // `apiKey:` annotation and flags any string literal in the signature (fn-param FP class).
+    const requested = String(regionInput || "us-east-1")
+      .trim()
+      .toLowerCase();
+    const isAuto = requested === KIRO_API_KEY_AUTO_REGION;
+    const region = isAuto ? await this.detectApiKeyRegion(accessToken) : requested;
+    assertValidAwsRegion(region);
 
     let profileArn: string | null = null;
     try {
@@ -574,7 +634,8 @@ export class KiroService {
       const isApiKeyProfileDenied =
         message.includes("AccessDeniedException") &&
         message.includes("API key authentication is not supported for this operation");
-      if (!isApiKeyProfileDenied) {
+      // With "auto" the model list has already accepted the key: the profile is optional then.
+      if (!isApiKeyProfileDenied && !isAuto) {
         throw error;
       }
     }

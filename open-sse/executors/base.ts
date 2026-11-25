@@ -5,7 +5,6 @@ import {
   type AlternateFormat,
 } from "../config/providers/alternateFormats.ts";
 import {
-  CLAUDE_CLI_BILLING_VERSION,
   CLAUDE_CLI_STAINLESS_RUNTIME_VERSION,
   mergeClientAnthropicBeta,
   normalizeAnthropicHeaderVariants,
@@ -56,15 +55,29 @@ import {
   appendAnthropicBetaHeader,
   CONTEXT_1M_BETA_HEADER,
   enforceThinkingTemperature,
+  enforceCacheControlLimit,
   modelHasNativeContext1m,
   modelSupportsContext1mBeta,
 } from "../services/claudeCodeCompatible.ts";
+import {
+  normalizeCacheControlTtlOrder,
+  normalizeTrailingAssistantTurn,
+  normalizeThinkingDisplay,
+  stripRefusedSamplingParams,
+} from "../services/claudeCodeConstraints.ts";
 import { getClaudeCodeCompatibleRequestDefaults } from "@/lib/providers/requestDefaults";
+import { getCachedSettings } from "@/lib/db/readCache";
+import {
+  getClaudeCodeClientBillingVersion,
+  getClaudeCodeClientVersion,
+  noteClaudeCodeClientVersionSetting,
+} from "@/shared/constants/claudeCodeClient";
 import {
   cloakThirdPartyToolNames,
   remapToolNamesInRequest,
 } from "../services/claudeCodeToolRemapper.ts";
 import { obfuscateInBody } from "../services/claudeCodeObfuscation.ts";
+import { modelRejectsAdaptiveAndEffort } from "../services/claudeHaikuConstraints.ts";
 import { sanitizeClaudeToolSchemas } from "../translator/helpers/schemaCoercion.ts";
 import { sanitizeResponsesInputItems } from "../services/responsesInputSanitizer.ts";
 import { applySystemTransformPipeline, PROVIDER_CLAUDE } from "../services/systemTransforms.ts";
@@ -77,7 +90,6 @@ import {
 } from "../services/contextManager.ts";
 import { randomUUID } from "node:crypto";
 import {
-  CLAUDE_CODE_VERSION,
   CLAUDE_CODE_STAINLESS_VERSION,
   buildUserIdJson,
   getSessionId,
@@ -207,6 +219,8 @@ export type CountTokensInput = {
   log?: ExecutorLog | null;
   model: string;
   signal?: AbortSignal | null;
+  /** Throw the failure (with the upstream `status` when there is one) instead of returning null. */
+  throwOnError?: boolean;
 };
 
 export function mergeAbortSignals(primary: AbortSignal, secondary: AbortSignal): AbortSignal {
@@ -342,6 +356,25 @@ export type ExecutorExecuteResult =
       transformedBody?: unknown;
       transport?: string;
     };
+
+/**
+ * A 429 that says the limit lasts longer than the short same-URL retry would wait (a used-up
+ * usage window, or a retry-after past the delay) is answered at once, so the caller can move
+ * to another account and the client learns the reset time without a pointless wait.
+ */
+export function rateLimitOutlastsRetry(headers: Headers | null | undefined, delayMs: number) {
+  if (!headers || typeof headers.get !== "function") return false;
+  if ((headers.get("anthropic-ratelimit-unified-status") || "").toLowerCase() === "rejected") {
+    return true;
+  }
+  const retryAfter = headers.get("retry-after");
+  if (!retryAfter) return false;
+  const seconds = Number(retryAfter);
+  const waitMs = Number.isFinite(seconds)
+    ? seconds * 1000
+    : new Date(retryAfter).getTime() - Date.now();
+  return Number.isFinite(waitMs) && waitMs > delayMs;
+}
 
 export class BaseExecutor {
   provider: string;
@@ -635,18 +668,21 @@ export class BaseExecutor {
     return query ? `${normalizedPath}?${query}` : normalizedPath;
   }
 
-  async countTokens({ model, body, credentials, signal, log }: CountTokensInput) {
+  async countTokens({ model, body, credentials, signal, log, throwOnError }: CountTokensInput) {
     const url = this.buildCountTokensUrl(model, credentials);
     if (!url) return null;
 
     const headers = this.buildHeaders(credentials, false);
-    const requestBody =
+    const requestBody: Record<string, unknown> =
       body && typeof body === "object"
         ? {
             ...body,
             model,
           }
         : { model };
+    if (this.provider === "claude" || this.provider === "anthropic") {
+      stripRefusedSamplingParams(requestBody, model);
+    }
 
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let activeSignal = signal || null;
@@ -670,7 +706,10 @@ export class BaseExecutor {
       const text = await response.text();
       if (!response.ok) {
         const parsedError = this.parseError(response, text);
-        throw new Error(parsedError.message);
+        throw Object.assign(new Error(parsedError.message), {
+          status: parsedError.status || response.status,
+          retryAfter: response.headers.get("retry-after"),
+        });
       }
 
       const parsed = text ? JSON.parse(text) : {};
@@ -681,6 +720,7 @@ export class BaseExecutor {
 
       return { input_tokens: inputTokens, provider: this.provider, source: "provider" };
     } catch (error) {
+      if (throwOnError) throw error;
       log?.debug?.(
         "COUNT_TOKENS",
         `${this.provider}/${model} real count unavailable: ${error instanceof Error ? error.message : String(error)}`
@@ -919,10 +959,13 @@ export class BaseExecutor {
         // Anthropic's user:sessions:claude_code OAuth scope expects CLI-shaped
         // traffic. Apply the cloak whenever we have an OAuth token, regardless
         // of upstream client.
+        // A setup token saved in the key field counts as the same OAuth token.
         const hasClaudeOAuthToken =
-          typeof activeCredentials?.accessToken === "string" &&
-          activeCredentials.accessToken.startsWith("sk-ant-oat") &&
-          !activeCredentials?.apiKey;
+          (typeof activeCredentials?.accessToken === "string" &&
+            activeCredentials.accessToken.startsWith("sk-ant-oat") &&
+            !activeCredentials?.apiKey) ||
+          (typeof activeCredentials?.apiKey === "string" &&
+            activeCredentials.apiKey.startsWith("sk-ant-oat"));
 
         if (
           this.provider === "claude" &&
@@ -931,6 +974,15 @@ export class BaseExecutor {
           transformedBody !== null
         ) {
           const tb = transformedBody as Record<string, unknown>;
+
+          // The client version presented upstream can be set in the dashboard settings
+          // (read from the in-memory settings cache; nothing is looked up on the network).
+          try {
+            const settings = await getCachedSettings();
+            noteClaudeCodeClientVersionSetting(settings?.claudeCodeClientVersion);
+          } catch {
+            // settings unavailable: the environment variable or the pin applies
+          }
 
           stripProxyToolPrefix(tb);
           remapToolNamesInRequest(tb);
@@ -1031,7 +1083,10 @@ export class BaseExecutor {
             // Generic OpenAI-compatible clients that route through native Claude OAuth
             // must opt in with x-trouteai-thinking; force-injecting adaptive thinking
             // leaks non-standard reasoning replay fields back into those clients.
+            // Haiku gets no injected defaults (as before). Only the Haiku models before 5.5
+            // refuse effort, so only theirs is removed; Haiku 5.5 keeps what the client sent.
             const isHaiku = typeof tb.model === "string" && tb.model.includes("haiku");
+            const haikuRejectsEffort = isHaiku && modelRejectsAdaptiveAndEffort(tb.model as string);
             // Honor the operator's proxy-level Thinking-Budget mode.
             // `auto` means "strip — let the provider decide", so suppress the default
             // adaptive injection. Passthrough/no-config keeps the native Claude Code
@@ -1041,8 +1096,10 @@ export class BaseExecutor {
               // Keep tb.thinking — real Claude Desktop keeps thinking enabled for Haiku.
               // Only strip output_config (effort) which Haiku rejects;
               // context_management is re-paired with the preserved thinking below.
-              delete tb.output_config;
-              delete tb.context_management;
+              if (haikuRejectsEffort) {
+                delete tb.output_config;
+                delete tb.context_management;
+              }
             } else if (tbMode === ThinkingMode.AUTO) {
               delete tb.thinking;
               delete tb.context_management;
@@ -1117,7 +1174,7 @@ export class BaseExecutor {
 
           // system[0] (billing) and system[1] (sentinel) must not carry
           // cache_control — that belongs on upstream prompt blocks at [2..].
-          const billingLine = `x-anthropic-billing-header: cc_version=${CLAUDE_CLI_BILLING_VERSION}; cc_entrypoint=cli; cch=00000;`;
+          const billingLine = `x-anthropic-billing-header: cc_version=${getClaudeCodeClientBillingVersion()}; cc_entrypoint=cli; cch=00000;`;
           const SENTINEL = "You are Claude Code, Anthropic's official CLI for Claude.";
 
           const sysBlocks: Array<Record<string, unknown>> = Array.isArray(tb.system)
@@ -1167,23 +1224,6 @@ export class BaseExecutor {
             sessionId,
           });
 
-          // Newer Claude Code sends `thinking.display: "updates"`; this backend answers 400
-          // "thinking.adaptive.display: Input should be 'summarized', 'omitted'" (seen live
-          // 2026-11-10, which also put the account step of the combo on cooldown). Keep the
-          // two accepted values; anything else becomes "summarized" (thinking stays visible).
-          {
-            const th = tb.thinking as Record<string, unknown> | undefined;
-            if (
-              th &&
-              typeof th === "object" &&
-              typeof th.display === "string" &&
-              th.display !== "summarized" &&
-              th.display !== "omitted"
-            ) {
-              tb.thinking = { ...th, display: "summarized" };
-            }
-          }
-
           // Headers. Accept stays application/json even on streams (Stainless
           // convention; SSE decoding is gated on body.stream). anthropic-beta
           // is selected per request shape; the full set on a quota probe is
@@ -1198,13 +1238,16 @@ export class BaseExecutor {
             // Merge the client's allowlisted betas (e.g. tool-search-tool)
             // on top of the shape-derived set so deferred-tool requests are not
             // rejected; selectBetaFlags still gates thinking/effort.
+            // context-1m follows the model that answers; skills needs a code-execution tool.
             "anthropic-beta": mergeClientAnthropicBeta(
               selectBetaFlags(tb, null, clientAnthropicBeta),
-              clientAnthropicBeta
+              clientAnthropicBeta,
+              undefined,
+              { model, body: tb }
             ),
             "anthropic-dangerous-direct-browser-access": "true",
             "x-app": "cli",
-            "User-Agent": `claude-cli/${CLAUDE_CODE_VERSION} (external, cli)`,
+            "User-Agent": `claude-cli/${getClaudeCodeClientVersion()} (external, cli)`,
             "X-Stainless-Package-Version": CLAUDE_CODE_STAINLESS_VERSION,
             "X-Stainless-Timeout": "600",
             "accept-encoding": "gzip, deflate, br, zstd",
@@ -1287,6 +1330,32 @@ export class BaseExecutor {
         // before fingerprinting and CCH signing serialize the body.
         if (this.provider === "claude" || isClaudeCodeCompatible(this.provider)) {
           enforceThinkingTemperature(transformedBody as Record<string, unknown>);
+        }
+
+        // Rules the Messages API enforces on the final body, for both Anthropic providers:
+        // no assistant prefill where the model refuses it (and none ending in whitespace),
+        // a longer cache TTL never after a shorter one, at most four cache breakpoints.
+        if (this.provider === "claude" || this.provider === "anthropic") {
+          const tb = transformedBody as Record<string, unknown>;
+          // After every addition above (the subscription path pins temperature 1 when
+          // thinking is on): no sampling parameter leaves for a model that refuses them.
+          stripRefusedSamplingParams(tb, typeof tb?.model === "string" ? tb.model : model);
+          // display "updates" only with its beta on the outgoing request and on a model
+          // that takes it; anything else the service refuses becomes "summarized".
+          const betaKey = Object.keys(headers).find((k) => k.toLowerCase() === "anthropic-beta");
+          normalizeThinkingDisplay(
+            tb,
+            typeof tb?.model === "string" ? tb.model : model,
+            betaKey ? headers[betaKey] : null
+          );
+          if (Array.isArray(tb?.messages)) {
+            tb.messages = normalizeTrailingAssistantTurn(
+              tb.messages as Array<Record<string, unknown>>,
+              model
+            );
+          }
+          normalizeCacheControlTtlOrder(tb);
+          enforceCacheControlLimit(tb);
         }
 
         // Delegated Context Editing (opt-in): attach the clear_tool_uses strategy so
@@ -1534,6 +1603,7 @@ export class BaseExecutor {
         if (
           !skipUpstreamRetry &&
           response.status === HTTP_STATUS.RATE_LIMITED &&
+          !rateLimitOutlastsRetry(response.headers, BaseExecutor.RETRY_CONFIG.delayMs) &&
           (retryAttemptsByUrl[urlIndex] ?? 0) < BaseExecutor.RETRY_CONFIG.maxAttempts
         ) {
           retryAttemptsByUrl[urlIndex] = (retryAttemptsByUrl[urlIndex] ?? 0) + 1;

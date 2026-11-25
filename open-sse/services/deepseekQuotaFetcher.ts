@@ -25,6 +25,7 @@
 import { registerQuotaFetcher, type QuotaInfo } from "./quotaPreflight.ts";
 import { registerMonitorFetcher } from "./quotaMonitor.ts";
 import { throttleQuotaFetch } from "./quotaFetchThrottle.ts";
+import { setIdleAwareInterval } from "@/lib/idleState";
 
 // DeepSeek API config
 const DEEPSEEK_CONFIG = {
@@ -60,18 +61,20 @@ interface CacheEntry {
 const quotaCache = new Map<string, CacheEntry>();
 
 // Auto-cleanup stale entries every 5 minutes
-const _cacheCleanup = setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of quotaCache) {
-    if (now - entry.fetchedAt > CACHE_TTL_MS * 5) {
-      quotaCache.delete(key);
+// Pauses while the server is idle: entries are only added by requests, and the next request
+// runs the sweep again.
+setIdleAwareInterval(
+  "deepseekQuotaFetcher-sweep",
+  () => {
+    const now = Date.now();
+    for (const [key, entry] of quotaCache) {
+      if (now - entry.fetchedAt > CACHE_TTL_MS * 5) {
+        quotaCache.delete(key);
+      }
     }
-  }
-}, 5 * 60_000);
-
-if (typeof _cacheCleanup === "object" && "unref" in _cacheCleanup) {
-  (_cacheCleanup as { unref?: () => void }).unref?.();
-}
+  },
+  5 * 60_000
+);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

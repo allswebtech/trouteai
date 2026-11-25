@@ -19,6 +19,7 @@ import {
 import { fetch as undiciFetch } from "undici";
 import { decideProxyHealthAction, type ProxyProbeOutcome } from "./decision.ts";
 import { isBuildProcess } from "@/shared/utils/testProcess";
+import { runUnlessIdle } from "@/lib/idleState";
 
 // A HEAD to the public probe target through a legit (often loaded) proxy
 // can exceed a few seconds; the old 5s ceiling produced false negatives that
@@ -175,10 +176,13 @@ async function sweep(): Promise<void> {
 
 function scheduleSweep(): void {
   const interval = getIntervalMs();
+  // While the server is idle a sweep waits for the next request.
   globalThis.__proxyHealthInterval = setInterval(() => {
-    void sweep().catch((err) => {
-      console.error(`${LOG_PREFIX} Sweep error:`, err);
-    });
+    runUnlessIdle("proxy-health", () =>
+      sweep().catch((err) => {
+        console.error(`${LOG_PREFIX} Sweep error:`, err);
+      })
+    );
   }, interval);
 }
 
@@ -188,7 +192,7 @@ export function initProxyHealthCheck(): void {
 
   setTimeout(() => {
     console.log(`${LOG_PREFIX} Starting proxy health scheduler (interval: ${getIntervalMs()}ms)`);
-    void sweep().catch(() => {});
+    runUnlessIdle("proxy-health", () => sweep().catch(() => {}));
     scheduleSweep();
   }, INITIAL_DELAY_MS);
 }

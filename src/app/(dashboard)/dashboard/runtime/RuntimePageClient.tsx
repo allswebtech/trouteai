@@ -6,6 +6,7 @@ import Link from "next/link";
 import Card from "@/shared/components/Card";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import ModelCooldownsCard from "./components/ModelCooldownsCard";
+import CostViewCard from "./components/CostViewCard";
 import { useProviderNodeMap, resolveProviderName } from "@/lib/display/useProviderNodeMap";
 
 type KnownBreakerState = "CLOSED" | "OPEN" | "HALF_OPEN" | "DEGRADED";
@@ -621,6 +622,8 @@ export default function RuntimePageClient() {
       </div>
 
       <ModelCooldownsCard />
+
+      <CostViewCard />
 
       {/* Row 2 — Resilience layers (left, 2/3) + Live Feed (right, 1/3) */}
       <div className="grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-3">
