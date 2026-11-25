@@ -18,6 +18,20 @@ export function parseRequestPriority(value: unknown): RequestPriority {
   return text === "interactive" || text === "background" ? text : "normal";
 }
 
+/**
+ * The priority a request waits with: its x-trouteai-priority header when that names a priority,
+ * otherwise the default of its API key, otherwise normal. A header with another value does not
+ * count, so it cannot lift a "background" key to normal.
+ */
+export function resolveRequestPriority(
+  header: string | null | undefined,
+  keyDefault: unknown
+): RequestPriority {
+  const text = typeof header === "string" ? header.trim().toLowerCase() : "";
+  if (text === "interactive" || text === "normal" || text === "background") return text;
+  return parseRequestPriority(keyDefault);
+}
+
 export interface SlotKey {
   key: string;
   max: number;

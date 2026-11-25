@@ -48,4 +48,8 @@ export const API_KEY_COLUMN_FALLBACKS = [
     name: "chaos_mode_enabled",
     definition: "chaos_mode_enabled INTEGER NOT NULL DEFAULT 0",
   },
+  {
+    name: "default_priority",
+    definition: "default_priority TEXT NOT NULL DEFAULT 'normal'",
+  },
 ] as const;

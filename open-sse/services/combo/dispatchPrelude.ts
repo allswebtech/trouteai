@@ -70,6 +70,8 @@ type PreludeBaseOptionArgs = {
   relayOptions?: HandleComboChatOptions["relayOptions"];
   signal?: AbortSignal | null;
   apiKeyAllowedConnections?: string[] | null;
+  // The request's queue priority, so a nested combo's queue ranks it the same way.
+  priority?: string | null;
 };
 
 /** Rebuild handleComboChat's option bag verbatim for a recursive dispatch. */
@@ -85,6 +87,7 @@ function buildBaseOptions(a: PreludeBaseOptionArgs): HandleComboChatOptions {
     relayOptions: a.relayOptions,
     signal: a.signal,
     apiKeyAllowedConnections: a.apiKeyAllowedConnections,
+    priority: a.priority,
   };
 }
 
@@ -342,6 +345,7 @@ export async function tryFusionDispatch(args: {
   relayOptions?: HandleComboChatOptions["relayOptions"];
   signal?: AbortSignal | null;
   apiKeyAllowedConnections?: string[] | null;
+  priority?: string | null;
   runCombo: RunCombo;
 }): Promise<Response | null> {
   const { cfg, combo, config, strategy, log } = args;
@@ -535,6 +539,7 @@ export async function tryRuntimeUnitDispatch(args: {
   relayOptions?: HandleComboChatOptions["relayOptions"];
   signal?: AbortSignal | null;
   apiKeyAllowedConnections?: string[] | null;
+  priority?: string | null;
   runCombo: RunCombo;
 }): Promise<Response | null> {
   const { body, combo, config, strategy, allCombos, log, settings } = args;

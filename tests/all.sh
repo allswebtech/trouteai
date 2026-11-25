@@ -46,7 +46,7 @@ for s in "$@"; do
       check-claude-reference.mts check-vision.mts check-answer-model.mts \
       check-models-catalog.mts check-swaps.mts check-combo-status.mts \
       check-cache-pass.mts check-fair-queue.mts check-cost-view.mts \
-      check-new-conversations.mts check-high-load.mts ;;
+      check-new-conversations.mts check-high-load.mts check-key-priority.mts ;;
     *) echo "unknown suite: $s (smoke, context, quota, status, answers, models, fit, idle, load, checks)"; exit 2 ;;
   esac
 done

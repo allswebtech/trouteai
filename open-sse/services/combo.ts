@@ -97,6 +97,12 @@ import {
   readLimitedConnectionIds,
   recordSlotUse,
 } from "./combo/leastBusy.ts";
+import {
+  isResponsesRequest,
+  noteResponseId,
+  previousResponseKey,
+  responseKey,
+} from "./combo/responseAffinity.ts";
 import { orderTargetsByEvalScores } from "./evalRouting.ts";
 import {
   applyPromptCacheAffinity,
@@ -677,6 +683,7 @@ export async function handleComboChat({
     relayOptions,
     signal,
     apiKeyAllowedConnections,
+    priority,
     runCombo: handleComboChat,
   });
   if (fusionDispatch) return fusionDispatch;
@@ -718,6 +725,7 @@ export async function handleComboChat({
     relayOptions,
     signal,
     apiKeyAllowedConnections,
+    priority,
     runCombo: handleComboChat,
   });
   if (runtimeUnitDispatch) return runtimeUnitDispatch;
@@ -2474,7 +2482,10 @@ async function handleRoundRobinCombo({
         filteredTargets,
         // Normalize both wire shapes (.messages / Responses-API .input) so RR
         // stickiness engages on the /v1/responses surface, not just Chat Completions.
-        normalizeStickinessMessages(body as { messages?: unknown; input?: unknown })
+        normalizeStickinessMessages(body as { messages?: unknown; input?: unknown }),
+        // A Responses turn that sends only its new input belongs to the answer it names: it
+        // follows that answer's account, and is placed anew only when the answer is not known.
+        previousResponseKey(body)
       );
   const rrAffinity = applyPromptCacheAffinity(filteredTargets, body, rrAffinityEnabled);
   if (rrAffinity.applied) {
@@ -2867,7 +2878,13 @@ async function handleRoundRobinCombo({
             // (re)record the sticky binding so the next turn re-pins (prompt-cache).
             if (_rrSessionSticky.messageHash) {
               const stickyConn = effectiveConnectionId || target.connectionId;
-              if (stickyConn) recordStickyBinding(_rrSessionSticky.messageHash, stickyConn);
+              if (_rrSessionSticky.messageHash === previousResponseKey(body)) {
+                // A Responses turn is keyed by the answer it follows; its own answer's id takes
+                // over below, so the old one is dropped and a conversation holds one pin.
+                clearStickyBinding(_rrSessionSticky.messageHash);
+              } else if (stickyConn) {
+                recordStickyBinding(_rrSessionSticky.messageHash, stickyConn);
+              }
             }
 
             if (provider) {
@@ -2891,12 +2908,21 @@ async function handleRoundRobinCombo({
               })();
             }
             // Clone is consumed by quality check; original stays unlocked.
-            return offset > 0
-              ? withTRouteAIRoutingHeaders(result, {
-                  fallback: "combo-step",
-                  fallbackAttempts: offset,
-                })
-              : result;
+            const answered =
+              offset > 0
+                ? withTRouteAIRoutingHeaders(result, {
+                    fallback: "combo-step",
+                    fallbackAttempts: offset,
+                  })
+                : result;
+            // A Responses answer's id is noted with the account that gave it, so the turn that
+            // names it in previous_response_id follows its conversation there.
+            const servedConnection = effectiveConnectionId || target.connectionId;
+            return servedConnection && !disableSessionStickiness && isResponsesRequest(body)
+              ? noteResponseId(answered, (id) =>
+                  recordStickyBinding(responseKey(id), servedConnection)
+                )
+              : answered;
           }
 
           // Extract error info
@@ -3063,7 +3089,10 @@ async function handleRoundRobinCombo({
           ) {
             const slotPauseMs = Math.min(cooldownMs, SLOT_PAUSE_MAX_MS);
             semaphore.markRateLimited(semaphoreKey, slotPauseMs);
-            log.warn("COMBO-RR", `${modelStr} error ${result.status}, slots paused ${slotPauseMs}ms`);
+            log.warn(
+              "COMBO-RR",
+              `${modelStr} error ${result.status}, slots paused ${slotPauseMs}ms`
+            );
           }
 
           if (isAllAccountsRateLimited) {
@@ -3103,7 +3132,10 @@ async function handleRoundRobinCombo({
           if (offset > 0) fallbackCount++;
           // A pinned turn never leaves its account for "high load": it had its retry there.
           if (highLoad) {
-            log.warn("COMBO-RR", `${modelStr} answered "high load"; the conversation stays on its account`);
+            log.warn(
+              "COMBO-RR",
+              `${modelStr} answered "high load"; the conversation stays on its account`
+            );
             return result;
           }
           log.warn("COMBO-RR", `${modelStr} failed, trying next model`, { status: result.status });

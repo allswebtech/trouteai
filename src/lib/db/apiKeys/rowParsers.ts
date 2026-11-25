@@ -163,3 +163,10 @@ export function parseIsBanned(value: unknown): boolean {
 export function parseStreamDefaultMode(value: unknown): "legacy" | "json" {
   return value === "json" ? "json" : "legacy";
 }
+
+export type KeyDefaultPriority = "interactive" | "normal" | "background";
+
+/** A key's default queue priority; anything unknown (an older store has none) is normal. */
+export function parseDefaultPriority(value: unknown): KeyDefaultPriority {
+  return value === "interactive" || value === "background" ? value : "normal";
+}

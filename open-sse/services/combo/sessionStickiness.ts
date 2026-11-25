@@ -424,14 +424,17 @@ export interface ApplyStickinessResult {
  */
 export async function applySessionStickiness(
   orderedTargets: ResolvedComboTarget[],
-  messages: Array<{ role?: string; content?: unknown }> | null | undefined
+  messages: Array<{ role?: string; content?: unknown }> | null | undefined,
+  // A key that names the conversation outright (a Responses turn's previous answer); it
+  // replaces the hash of the first user message.
+  sessionKey: string | null = null
 ): Promise<ApplyStickinessResult> {
   const noOp: ApplyStickinessResult = { targets: orderedTargets, messageHash: null, stuck: false };
 
   try {
     if (orderedTargets.length <= 1) return noOp;
 
-    const messageHash = deriveMessageHash(messages);
+    const messageHash = sessionKey || deriveMessageHash(messages);
     if (!messageHash) return noOp;
 
     const existing = stickyMap.get(messageHash);

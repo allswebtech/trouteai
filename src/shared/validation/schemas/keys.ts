@@ -108,6 +108,7 @@ export const updateKeyPermissionsSchema = z
     dailyUsageLimitUsd: z.coerce.number().min(0).optional().nullable(),
     weeklyUsageLimitUsd: z.coerce.number().min(0).optional().nullable(),
     chaosModeEnabled: z.boolean().optional(),
+    defaultPriority: z.enum(["interactive", "normal", "background"]).optional(),
   })
   .superRefine((value, ctx) => {
     if (
@@ -132,7 +133,8 @@ export const updateKeyPermissionsSchema = z
       value.usageLimitEnabled === undefined &&
       value.dailyUsageLimitUsd === undefined &&
       value.weeklyUsageLimitUsd === undefined &&
-      value.chaosModeEnabled === undefined
+      value.chaosModeEnabled === undefined &&
+      value.defaultPriority === undefined
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

@@ -3,6 +3,22 @@
 What changed in each TRouteAI release. Update with `trouteai update`; on a hosting panel,
 deploy again.
 
+## 1.0.11 (2026-11-25): a priority per key, conversations kept together
+
+- **A default priority per API key.** On a key's page in **API Keys**, choose whether its requests
+  wait as interactive, normal or background when a combo is busy. A request's own
+  `x-trouteai-priority` header still wins. Keys you already have stay normal, so nothing changes
+  until you pick something else.
+- **A Responses conversation stays on its account.** A turn that sends only its new input with
+  `previous_response_id` now goes to the account that gave that earlier answer, so the
+  conversation and its prompt cache stay together. Before, such a turn could land on another
+  account. An id the gateway does not know is placed like a new conversation.
+- **A new conversation no longer starts on an account whose quota is used up.** It starts on an
+  account that can answer. Before, the gateway could pick the used-up account first and only then
+  move on.
+
+Updating from 1.0.10 changes nothing in your providers, keys and combos.
+
 ## 1.0.10 (2026-11-25): steady under load, honest answers, the prompt cache kept
 
 ### Under many requests at once

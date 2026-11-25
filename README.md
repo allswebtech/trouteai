@@ -212,7 +212,9 @@ curl http://localhost:20017/v1/chat/completions \
   frees, up to the combo's queue timeout (default 120 seconds); after that it gets a 429 that
   says the gateway is busy, with a `Retry-After`. The header
   `x-trouteai-priority: interactive` or `background` puts a request ahead of or behind the
-  others while it waits (anything else counts as normal); with free slots it changes nothing
+  others while it waits (`normal` too; any other value counts as no header); with free slots it
+  changes nothing. A request without the header waits with its key's **Default priority**,
+  set on the key in **API Keys** (normal unless changed)
 
 The sidebar starts with a **simple menu** (main pages only). Use **Show all menus** at the
 bottom of the sidebar to see every page.

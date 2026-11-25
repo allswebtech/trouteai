@@ -71,10 +71,21 @@ export function recordSlotUse(key: string): void {
 
 const TERMINAL_STATUSES = new Set(["credits_exhausted", "banned", "expired"]);
 
-/** Accounts of these providers that are limited until later or durably out. Fail-open: empty. */
+/**
+ * Accounts of these providers that are limited until later, durably out, or whose quota is used
+ * up (the quota cache says so: a usage-limit answer or the provider's own figures). Fail-open:
+ * empty.
+ */
 export async function readLimitedConnectionIds(providers: string[]): Promise<Set<string>> {
   const limited = new Set<string>();
   const nowMs = Date.now();
+  let quotaUsedUp: (connectionId: string) => boolean = () => false;
+  try {
+    const quota = await import("../../../src/domain/quotaCache");
+    quotaUsedUp = (connectionId) => Boolean(quota.isAccountQuotaExhausted(connectionId));
+  } catch {
+    // without the quota cache only the account rows decide
+  }
   await Promise.all(
     [...new Set(providers.filter((p) => p && p !== "unknown"))].map(async (provider) => {
       try {
@@ -86,7 +97,11 @@ export async function readLimitedConnectionIds(providers: string[]): Promise<Set
           if (!id) continue;
           const until = row.rateLimitedUntil ? Date.parse(String(row.rateLimitedUntil)) : NaN;
           const status = typeof row.testStatus === "string" ? row.testStatus : "";
-          if ((Number.isFinite(until) && until > nowMs) || TERMINAL_STATUSES.has(status)) {
+          if (
+            (Number.isFinite(until) && until > nowMs) ||
+            TERMINAL_STATUSES.has(status) ||
+            quotaUsedUp(id)
+          ) {
             limited.add(id);
           }
         }

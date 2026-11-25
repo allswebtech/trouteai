@@ -97,6 +97,8 @@ export interface ApiKeyMetadata {
   usageLimitEnabled?: boolean;
   dailyUsageLimitUsd?: number | null;
   weeklyUsageLimitUsd?: number | null;
+  // Queue priority of the key's requests that carry no x-trouteai-priority header.
+  defaultPriority?: "interactive" | "normal" | "background";
 }
 
 /**

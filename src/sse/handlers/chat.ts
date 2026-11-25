@@ -114,6 +114,7 @@ import { isSubscriptionQuotaText } from "@trouteai/open-sse/services/quotaTextCo
 import { resolveUseUpstream429BreakerHints } from "@/shared/utils/providerHints";
 import { getCircuitBreaker, isLocalStreamLifecycleError } from "../../shared/utils/circuitBreaker";
 import { markAccountExhaustedFrom429 } from "../../domain/quotaCache";
+import { resolveRequestPriority } from "@trouteai/open-sse/services/combo/fairQueue.ts";
 import { RequestTelemetry, recordTelemetry } from "../../shared/utils/requestTelemetry";
 import { generateRequestId } from "../../shared/utils/requestId";
 import { logAuditEvent } from "../../lib/compliance/index";
@@ -940,7 +941,10 @@ async function handleChatRequest(
       relayOptions,
       signal: request?.signal ?? null,
       correlationId: reqId,
-      priority: request?.headers?.get?.("x-trouteai-priority") ?? null,
+      priority: resolveRequestPriority(
+        request?.headers?.get?.("x-trouteai-priority") ?? null,
+        apiKeyInfo?.defaultPriority
+      ),
     });
 
     let response = comboResponse;
@@ -1990,21 +1994,21 @@ async function handleSingleModelChatInner(
         : isHighLoadAnswer(result.status, errorStr)
           ? { shouldFallback: true, cooldownMs: 0 }
           : await markAccountUnavailable(
-            credentials.connectionId,
-            result.status,
-            errorStr,
-            provider,
-            model,
-            providerProfile,
-            {
-              persistUnavailableState: !(
-                isCombo &&
-                result.status === 429 &&
-                (failureKind === "rate_limit" || failureKind === "transient")
-              ),
-              isCombo,
-            }
-          );
+              credentials.connectionId,
+              result.status,
+              errorStr,
+              provider,
+              model,
+              providerProfile,
+              {
+                persistUnavailableState: !(
+                  isCombo &&
+                  result.status === 429 &&
+                  (failureKind === "rate_limit" || failureKind === "transient")
+                ),
+                isCombo,
+              }
+            );
 
       if (shouldFallback) {
         if (Number.isFinite(cooldownMs) && cooldownMs > 0) {

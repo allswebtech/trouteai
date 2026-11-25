@@ -107,6 +107,7 @@ interface AccessSchedule {
 }
 
 type StreamDefaultMode = "legacy" | "json";
+type KeyPriority = "interactive" | "normal" | "background";
 
 interface ApiKey {
   id: string;
@@ -128,6 +129,7 @@ interface ApiKey {
   scopes?: string[];
   allowedEndpoints?: string[];
   streamDefaultMode?: StreamDefaultMode;
+  defaultPriority?: KeyPriority;
   disableNonPublicModels?: boolean;
   allowUsageCommand?: boolean;
   chaosModeEnabled?: boolean;
@@ -811,7 +813,8 @@ export default function ApiManagerPageClient() {
     dailyUsageLimitUsd: number | null,
     weeklyUsageLimitUsd: number | null,
     blockedModels: string[],
-    chaosModeEnabled: boolean
+    chaosModeEnabled: boolean,
+    defaultPriority: KeyPriority
   ) => {
     if (!editingKey || !editingKey.id) return;
 
@@ -883,6 +886,7 @@ export default function ApiManagerPageClient() {
           dailyUsageLimitUsd,
           weeklyUsageLimitUsd,
           chaosModeEnabled,
+          defaultPriority,
         }),
       });
 
@@ -1706,7 +1710,8 @@ const PermissionsModal = memo(function PermissionsModal({
     dailyUsageLimitUsd: number | null,
     weeklyUsageLimitUsd: number | null,
     blockedModels: string[],
-    chaosModeEnabled: boolean
+    chaosModeEnabled: boolean,
+    defaultPriority: KeyPriority
   ) => void;
 }) {
   const t = useTranslations("apiManager");
@@ -1770,6 +1775,11 @@ const PermissionsModal = memo(function PermissionsModal({
   );
   const [streamDefaultMode, setStreamDefaultMode] = useState<StreamDefaultMode>(
     apiKey?.streamDefaultMode === "json" ? "json" : "legacy"
+  );
+  const [defaultPriority, setDefaultPriority] = useState<KeyPriority>(
+    apiKey?.defaultPriority === "interactive" || apiKey?.defaultPriority === "background"
+      ? apiKey.defaultPriority
+      : "normal"
   );
   const [nameError, setNameError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -1998,7 +2008,8 @@ const PermissionsModal = memo(function PermissionsModal({
       parseUsdLimitInput(dailyUsageLimitUsd),
       parseUsdLimitInput(weeklyUsageLimitUsd),
       blockedModels,
-      chaosModeEnabled
+      chaosModeEnabled,
+      defaultPriority
     );
   }, [
     onSave,
@@ -2038,6 +2049,7 @@ const PermissionsModal = memo(function PermissionsModal({
     blockedClaudeCodeFamilies,
     initialBlockedModels,
     chaosModeEnabled,
+    defaultPriority,
     apiKey?.scopes,
     t,
   ]);
@@ -2464,6 +2476,37 @@ const PermissionsModal = memo(function PermissionsModal({
               <span className="material-symbols-outlined text-[14px]">data_object</span>
               {t("streamDefaultJson")}
             </button>
+          </div>
+        </div>
+
+        {/* Default priority in a busy combo's queue */}
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 p-3 rounded-lg border border-border bg-surface/40">
+          <div className="flex flex-col gap-1 min-w-0">
+            <p className="text-sm font-medium text-text-main">{t("defaultPriority")}</p>
+            <p className="text-xs text-text-muted">{t("defaultPriorityDesc")}</p>
+          </div>
+          <div className="flex gap-1 p-0.5 bg-surface rounded-md shrink-0 w-full sm:w-auto">
+            {(["interactive", "normal", "background"] as const).map((level) => (
+              <button
+                key={level}
+                type="button"
+                onClick={() => setDefaultPriority(level)}
+                aria-pressed={defaultPriority === level}
+                className={`inline-flex flex-1 sm:flex-none items-center justify-center px-2.5 py-1.5 rounded text-xs font-semibold transition-all ${
+                  defaultPriority === level
+                    ? "bg-primary text-on-primary"
+                    : "text-text-muted hover:bg-surface-2"
+                }`}
+              >
+                {t(
+                  level === "interactive"
+                    ? "defaultPriorityInteractive"
+                    : level === "background"
+                      ? "defaultPriorityBackground"
+                      : "defaultPriorityNormal"
+                )}
+              </button>
+            ))}
           </div>
         </div>
 
