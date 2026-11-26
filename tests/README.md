@@ -60,6 +60,11 @@ named suites.
 |                             | `check-provider-catalog.mts` (the provider list held against the code's catalog and the OAuth flow sets: every provider once, seven public fields, the flow of each, no secret)                                                                                                                                                                                                                                             | 32          |
 |                             | `check-login-link.mts` (the one-time sign-in link store: once, 60 seconds, wrong or late codes refused, small and in memory)                                                                                                                                                                                                                                                                                                | 13          |
 
+`node tests/smoke/install-e2e.mjs [tarball]` is not part of `test:all` (it needs the network and a packed build). It installs the packed
+build with the README's line into a prefix of its own, starts it with `--port`, `--host` and `--data-dir`, makes a key, asks `/v1/models`, stops it
+with SIGTERM (port free, no process left), then upgrades from the released 1.0.10 on the same data folder and prints the idle memory and CPU.
+`.github/workflows/install.yml` runs it on Linux, macOS and Windows with Node 24 and 26.
+
 `npm test` runs `smoke/run.sh`; `npm run test:all` runs `all.sh` (smoke, context, quota, status,
 answers, models, fit, idle, load and the checks above).
 

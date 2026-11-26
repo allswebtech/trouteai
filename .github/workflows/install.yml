@@ -1,0 +1,68 @@
+# Install and first start on Linux, macOS and Windows: the packed build is installed with the README's
+# line into a prefix of its own, started, asked, stopped; then the upgrade from the released 1.0.10 keeps
+# the provider and the key; the idle memory and CPU are printed (not a gate).
+# No secrets and no accounts: a throwaway data folder and a spare port on localhost.
+name: Install
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/install.yml"
+      - "tests/smoke/install-e2e.mjs"
+      - "bin/**"
+      - "scripts/**"
+      - "package.json"
+  pull_request:
+    paths:
+      - ".github/workflows/install.yml"
+      - "tests/smoke/install-e2e.mjs"
+      - "bin/**"
+      - "scripts/**"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [24, 26]
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install the build tools
+        run: npm ci --no-audit --no-fund
+
+      # npm pack runs the release build (prepack) and makes the tarball the script installs.
+      - name: Pack
+        shell: bash
+        run: |
+          mkdir "$RUNNER_TEMP/pack"
+          npm pack --pack-destination "$RUNNER_TEMP/pack" --loglevel=error
+          ls "$RUNNER_TEMP/pack"
+        env:
+          DATA_DIR: ${{ runner.temp }}/build-data
+
+      - name: Install, start, ask, stop, upgrade, idle numbers
+        shell: bash
+        run: node tests/smoke/install-e2e.mjs "$RUNNER_TEMP"/pack/trouteai-*.tgz
