@@ -196,10 +196,26 @@ interface ApiKeyView extends JsonRecord {
   defaultPriority?: "interactive" | "normal" | "background";
 }
 
+// The key caches are shared by every copy of this module in the process: the build makes one copy
+// per route bundle, and a copy that kept its own maps would go on answering for a key that another
+// copy just removed. They are kept on globalThis, so every copy clears and reads the same maps.
+interface ApiKeyCaches {
+  validation: Map<string, { valid: boolean; timestamp: number }>;
+  metadata: Map<string, CacheEntry<ApiKeyMetadata>>;
+  lastUsed: Map<string, number>;
+  modelPermission: Map<string, { allowed: boolean; timestamp: number }>;
+}
+const _apiKeyGlobal = globalThis as typeof globalThis & { __trouteaiApiKeyCaches?: ApiKeyCaches };
+const _apiKeyCaches: ApiKeyCaches = (_apiKeyGlobal.__trouteaiApiKeyCaches ??= {
+  validation: new Map(),
+  metadata: new Map(),
+  lastUsed: new Map(),
+  modelPermission: new Map(),
+});
 // LRU cache for API key validation (valid keys only)
-const _keyValidationCache = new Map<string, { valid: boolean; timestamp: number }>();
-const _keyMetadataCache = new Map<string, CacheEntry<ApiKeyMetadata>>();
-const _lastUsedUpdateCache = new Map<string, number>();
+const _keyValidationCache = _apiKeyCaches.validation;
+const _keyMetadataCache = _apiKeyCaches.metadata;
+const _lastUsedUpdateCache = _apiKeyCaches.lastUsed;
 const CACHE_TTL = 60 * 1000; // 1 minute TTL
 const LAST_USED_UPDATE_TTL = 5 * 60 * 1000;
 const MAX_CACHE_SIZE = 1000;
@@ -208,7 +224,7 @@ const MAX_CACHE_SIZE = 1000;
 // (deterministic, no RegExp from dynamic strings).
 
 // Cache for model permission checks
-const _modelPermissionCache = new Map<string, { allowed: boolean; timestamp: number }>();
+const _modelPermissionCache = _apiKeyCaches.modelPermission;
 
 // Prepared statements cache
 let _stmtGetAllKeys: ApiKeysStatements["getAllKeys"] | null = null;

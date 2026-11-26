@@ -15,6 +15,9 @@ deploy again.
 
 ### Fixed
 
+- **A removed key stops working at once.** Before, a key that was deleted, switched off or banned
+  was still answered for up to a minute, until a restart in some cases, because each part of the
+  server kept its own copy of the key cache. Now it is refused on the very next request.
 - **The Restart button brings the gateway back.** Started with the `trouteai` command, the gateway
   now starts again on the same port after Restart (before, it only stopped). Started some other way
   (for example `node app.cjs`), Restart says that nothing would start it again and does nothing;
