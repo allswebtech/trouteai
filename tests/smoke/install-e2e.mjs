@@ -29,9 +29,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The restart step waits for the mend of the Restart route (its own Restart must not end it). Turn it on
-// when that is merged: POST /api/restart, then /healthz answers again on the same port with the same parent pid.
-const RESTART_STEP = false;
+// The restart step: POST /api/restart, then /healthz answers again on the same port with the same parent pid.
+const RESTART_STEP = true;
 
 const WIN = process.platform === "win32";
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
