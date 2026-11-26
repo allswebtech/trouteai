@@ -2,7 +2,9 @@
 // hashed aliases such as `.build/next/node_modules/pino-28069d5257187539`, which are
 // symlinks into the real node_modules. npm does not pack symlinks, so the build writes the
 // alias list to a manifest and an installed copy recreates the links (postinstall, and
-// again when `trouteai` starts).
+// again when `trouteai` starts). A release build does without the links: inlineExternalAliases
+// puts the package names into the build output, so a copy installed by one user (root, for
+// example) starts for another, which cannot write into the package folder.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -92,5 +94,51 @@ export function ensureExternalLinks(rootDir, distDir = path.join(rootDir, ".buil
       result.failed.push(`${alias}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  return result;
+}
+
+const SKIPPED_DIRS = new Set(["node_modules", "cache", "dev", "types", "diagnostics"]);
+
+function listBuildFiles(dir, found = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!SKIPPED_DIRS.has(entry.name)) listBuildFiles(entryPath, found);
+    } else if (/\.(?:c|m)?js$|\.json$/.test(entry.name)) {
+      found.push(entryPath);
+    }
+  }
+  return found;
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+}
+
+/**
+ * Release builds: replace every alias of the manifest (`pino-28069d5257187539`) by its package
+ * name (`pino`) in the build output, then empty the manifest. Node finds the package in the
+ * installed copy's own node_modules, so nothing has to be linked at install or at start.
+ */
+export function inlineExternalAliases(distDir) {
+  const manifestPath = path.join(distDir, EXTERNALS_MANIFEST);
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  // Longest alias first, and never inside a longer name.
+  const aliases = Object.keys(manifest).sort((a, b) => b.length - a.length);
+  const result = { files: 0 };
+  if (aliases.length === 0) return result;
+  const pattern = new RegExp(
+    `(?<![A-Za-z0-9_-])(${aliases.map(escapeRegExp).join("|")})(?![A-Za-z0-9_-])`,
+    "g"
+  );
+  for (const file of listBuildFiles(distDir)) {
+    if (file === manifestPath) continue;
+    const content = fs.readFileSync(file, "utf8");
+    const replaced = content.replace(pattern, (alias) => manifest[alias]);
+    if (replaced === content) continue;
+    fs.writeFileSync(file, replaced, "utf8");
+    result.files += 1;
+  }
+  fs.writeFileSync(manifestPath, "{}\n", "utf8");
   return result;
 }

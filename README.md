@@ -165,7 +165,7 @@ All settings are in one file, `.env` in the data folder (`~/.trouteai/.env`; on 
 | Setting                | Default   | Meaning                                                                      |
 | ---------------------- | --------- | ---------------------------------------------------------------------------- |
 | `PORT`                 | `20017`   | Port for the dashboard and the API                                           |
-| `HOST`                 | `0.0.0.0` | `0.0.0.0` = this computer and your network, `127.0.0.1` = only this computer |
+| `HOST`                 | empty     | empty = only this computer, `0.0.0.0` = this computer and your network       |
 | `INITIAL_PASSWORD`     | empty     | Password for the first login (8+ characters); empty = random password file   |
 | `REQUIRE_API_KEY`      | `true`    | Apps must send an API key created in the dashboard                           |
 | `NEXT_PUBLIC_BASE_URL` | empty     | Your public address behind a domain, for example `https://ai.example.com`    |

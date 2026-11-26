@@ -29,6 +29,8 @@ import { NETWORK_HINT, displayHost, resolveListenHosts } from "../scripts/dev/li
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
 const DEFAULT_PORT = 20017;
+// The server ends with this code when its Restart button was pressed (src/lib/gracefulShutdown.ts).
+const RESTART_EXIT_CODE = 75;
 const RECOMMENDED_NODE_MAJOR = 26;
 const SECRET_KEY = /PASSWORD|SECRET|TOKEN|PRIVATE|(^|_)KEY$/;
 
@@ -249,7 +251,12 @@ async function startServer(options, dataDir, settingsFile, nodeNote) {
     );
   }
   const links = ensureExternalLinks(ROOT);
-  for (const message of links.failed) console.warn(`  ${yellow("⚠")} Could not link ${message}`);
+  if (links.failed.length > 0) {
+    fail(
+      "This copy of TRouteAI was installed by another user, so it cannot finish its setup for you.\n" +
+        "    Install it again as the user who runs it: npm install -g trouteai  (or ask the one who installed it to do so)"
+    );
+  }
 
   const portProblem = await probePort(port, host);
   if (portProblem === "EADDRINUSE") {
@@ -618,20 +625,24 @@ function runWithHeapCap(dataDirFlag) {
   const heapArgs = envHasExplicitHeapFlag(childEnv) ? [] : [`--max-old-space-size=${heapMb}`];
   return new Promise((resolve) => {
     let child;
-    try {
-      child = spawn(
+    let started = false;
+    let stopping = false;
+    const launch = () =>
+      spawn(
         process.execPath,
         [...heapArgs, ...process.execArgv, process.argv[1], ...process.argv.slice(2)],
         { stdio: "inherit", env: childEnv }
       );
+    try {
+      child = launch();
     } catch {
       resolve(false);
       return;
     }
-    let started = false;
     const forward = (signal) => {
       // Ctrl+C reaches the child too (same process group); a repeat signal is harmless.
       // On Windows kill() terminates at once (no drain), so only keep the parent alive.
+      stopping = true;
       if (process.platform === "win32") return;
       if (started && child.exitCode === null && child.signalCode === null) {
         try {
@@ -642,21 +653,32 @@ function runWithHeapCap(dataDirFlag) {
     const signals =
       process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
     for (const signal of signals) process.on(signal, forward);
-    child.once("spawn", () => {
-      started = true;
-      process.title = "trouteai";
-      resolve(true);
-    });
-    child.once("error", () => {
-      if (started) return;
-      for (const signal of signals) process.off(signal, forward);
-      resolve(false);
-    });
-    child.once("exit", (code, signal) => {
-      if (!started) return;
-      const signalNumber = signal ? os.constants.signals[signal] : undefined;
-      process.exit(code ?? (signalNumber ? 128 + signalNumber : 1));
-    });
+    const watch = () => {
+      child.once("spawn", () => {
+        started = true;
+        process.title = "trouteai";
+        resolve(true);
+      });
+      child.once("error", () => {
+        if (started) return;
+        for (const signal of signals) process.off(signal, forward);
+        resolve(false);
+      });
+      child.once("exit", (code, signal) => {
+        if (!started) return;
+        // The Restart button ends the server with this code: start it again, same port.
+        if (code === RESTART_EXIT_CODE && !stopping) {
+          try {
+            child = launch();
+            watch();
+            return;
+          } catch {}
+        }
+        const signalNumber = signal ? os.constants.signals[signal] : undefined;
+        process.exit(code ?? (signalNumber ? 128 + signalNumber : 1));
+      });
+    };
+    watch();
   });
 }
 

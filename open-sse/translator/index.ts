@@ -34,6 +34,7 @@ import {
   requiresReasoningReplay,
 } from "../services/reasoningCache.ts";
 import { normalizeResponsesReasoningEffort } from "./request/openai-responses/helpers.ts";
+import { newResponseId } from "../utils/responseId.ts";
 
 bootstrapTranslatorRegistry();
 export { register } from "./registry.ts";
@@ -673,7 +674,7 @@ export function initState(sourceFormat) {
     return {
       ...base,
       seq: 0,
-      responseId: `resp_${Date.now()}`,
+      responseId: newResponseId(),
       created: Math.floor(Date.now() / 1000),
       started: false,
       msgTextBuf: {},

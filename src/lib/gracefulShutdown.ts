@@ -23,7 +23,16 @@ const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS || "7000", 
 /** Longest wait for Next.js to close once the drain is over. */
 const CLOSE_NEXT_TIMEOUT_MS = 1000;
 
+/** The exit code that tells the `trouteai` command to start the server again (bin/trouteai.mjs). */
+export const RESTART_EXIT_CODE = 75;
+
+function exitCode(): number {
+  return globalThis.__trouteaiRestart ? RESTART_EXIT_CODE : 0;
+}
+
 declare global {
+  /** Set by POST /api/restart: the stop that follows is a restart. */
+  var __trouteaiRestart: boolean | undefined;
   var __trouteaiShutdown:
     { init: boolean; shuttingDown: boolean; activeRequests: number } | undefined;
   /**
@@ -171,7 +180,7 @@ export function initGracefulShutdown(): void {
     // Whatever happens below (a hung close, a stuck clean-up), the process ends in time.
     const hardExit = setTimeout(() => {
       console.warn("[Shutdown] Clean-up took too long. Exiting now.");
-      process.exit(0);
+      process.exit(exitCode());
     }, SHUTDOWN_TIMEOUT_MS + 2500);
     hardExit.unref?.();
 
@@ -206,7 +215,7 @@ export function initGracefulShutdown(): void {
     await cleanup();
 
     console.log("[Shutdown] Bye.");
-    process.exit(0);
+    process.exit(exitCode());
   };
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));

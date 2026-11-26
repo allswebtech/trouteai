@@ -328,7 +328,15 @@ export default function Sidebar({ onClose, collapsed = false, onToggleCollapse }
   const handleRestart = async () => {
     setIsRestarting(true);
     try {
-      await fetch("/api/restart", { method: "POST" });
+      const res = await fetch("/api/restart", { method: "POST" });
+      if (!res.ok) {
+        // Nothing would start the server again: say so instead of showing "disconnected".
+        const body = await res.json().catch(() => null);
+        setIsRestarting(false);
+        setShowRestartModal(false);
+        globalThis.alert(body?.error?.message || `Restart failed (HTTP ${res.status}).`);
+        return;
+      }
     } catch (e) {
       // Expected to fail as server restarts
     }
