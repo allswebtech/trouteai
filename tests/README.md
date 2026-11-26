@@ -56,6 +56,11 @@ named suites.
 |                             | `check-fair-queue.mts` (the combo's wait queue: first free slot, priority order, a client that leaves, the busy 429)                                                                                                                                                                                                                                                                                                        | 12          |
 |                             | `check-cost-view.mts` (what each account and API key runs and costs: in flight, waiting, limits, today and week, the cache share)                                                                                                                                                                                                                                                                                           | 20          |
 
+`node tests/smoke/install-e2e.mjs [tarball]` is not part of `test:all` (it needs the network and a packed build). It installs the packed
+build with the README's line into a prefix of its own, starts it with `--port`, `--host` and `--data-dir`, makes a key, asks `/v1/models`, stops it
+with SIGTERM (port free, no process left), then upgrades from the released 1.0.10 on the same data folder and prints the idle memory and CPU.
+`.github/workflows/install.yml` runs it on Linux, macOS and Windows with Node 24 and 26.
+
 `npm test` runs `smoke/run.sh`; `npm run test:all` runs `all.sh` (smoke, context, quota, status,
 answers, models, fit, idle, load and the checks above).
 
