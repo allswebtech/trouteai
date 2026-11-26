@@ -10,6 +10,7 @@ import {
 } from "../utils/finishReason.ts";
 import { containsTextualToolCallMarker } from "../utils/textualToolCall.ts";
 import { getAnyReasoningValue } from "../utils/reasoningFields.ts";
+import { newResponseId } from "../utils/responseId.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -793,7 +794,7 @@ function convertOpenAINonStreamingToGeminiFamily(openaiResponse: JsonRecord): Js
         totalTokenCount: toNumber(usageSrc.total_tokens, promptTokens + completionTokens),
       },
       modelVersion: toString(openaiResponse.model, "unknown"),
-      responseId: toString(openaiResponse.id, `resp_${Date.now()}`),
+      responseId: toString(openaiResponse.id, newResponseId()),
     },
   };
 

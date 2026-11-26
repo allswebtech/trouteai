@@ -1,5 +1,6 @@
 import { cloneLogPayload } from "@/lib/logPayloads";
 import { FORMATS } from "../translator/formats.ts";
+import { newResponseId } from "./responseId.ts";
 
 type StructuredSSEEvent = {
   index: number;
@@ -324,7 +325,7 @@ function buildResponsesSummary(
   if (picked && Object.keys(picked).length > 0) {
     const pickedOutput = Array.isArray(picked.output) ? picked.output : [];
     return {
-      id: toString(picked.id, `resp_${Date.now()}`),
+      id: toString(picked.id, newResponseId()),
       object: "response",
       model: toString(picked.model, fallbackModel || "unknown"),
       output: pickedOutput.length > 0 ? pickedOutput : buildOutputFromText(),
@@ -336,7 +337,7 @@ function buildResponsesSummary(
   }
 
   return {
-    id: `resp_${Date.now()}`,
+    id: newResponseId(),
     object: "response",
     model: fallbackModel || "unknown",
     output: buildOutputFromText(),

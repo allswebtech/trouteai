@@ -22,7 +22,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { writeExternalsManifest } from "./buildExternals.mjs";
+import { inlineExternalAliases, writeExternalsManifest } from "./buildExternals.mjs";
 
 const rootDir = process.cwd();
 const release = process.argv.includes("--release");
@@ -83,7 +83,10 @@ child.on("exit", (code, signal) => {
   if (signal || code !== 0) process.exit(signal ? 1 : (code ?? 1));
   try {
     writeExternalsManifest(distDir);
-    if (release) stripBuildMachinePaths();
+    if (release) {
+      stripBuildMachinePaths();
+      inlineExternalAliases(distDir);
+    }
   } catch (error) {
     console.error("[build] Failed to finalize the build output:", error);
     process.exit(1);

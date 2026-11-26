@@ -3,6 +3,26 @@
 What changed in each TRouteAI release. Update with `trouteai update`; on a hosting panel,
 deploy again.
 
+## Next release
+
+### Fixed
+
+- **The Restart button brings the gateway back.** Started with the `trouteai` command, the gateway
+  now starts again on the same port after Restart (before, it only stopped). Started some other way
+  (for example `node app.cjs`), Restart says that nothing would start it again and does nothing;
+  set `TROUTEAI_RESTART_SUPERVISED=true` when a hosting panel or a service manager restarts it for
+  you.
+- **A copy installed by one user starts for another.** Before, a copy installed globally by root
+  and started by a normal user said it was ready and answered an error to every request. The
+  release no longer needs any link made at install or at start. A copy that still cannot be set up
+  stops with one sentence that says what to do.
+- **A response id is never repeated.** The id the gateway makes when a provider sent none could
+  repeat for two answers in the same millisecond. It now has a random part.
+
+### Docs
+
+- `HOST` is empty by default (only this computer), as the command line says; the README now says so.
+
 ## 1.0.11 (2026-11-25): a priority per key, conversations kept together
 
 - **A default priority per API key.** On a key's page in **API Keys**, choose whether its requests
