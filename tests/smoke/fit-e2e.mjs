@@ -346,6 +346,149 @@ check(
   `status ${noTokenCreate.status}`
 );
 
+// ── The provider list and the one-time sign-in link (for a program that manages this server) ──
+const cliAuth = { "x-trouteai-cli-token": secretFromFile };
+const catalogNone = await request(`${base}/api/providers/catalog`);
+check(
+  "the provider list needs management rights",
+  catalogNone.status === 401 || catalogNone.status === 403,
+  `status ${catalogNone.status}`
+);
+const catalogKey = await request(`${base}/api/providers/catalog`, {
+  headers: { authorization: `Bearer ${key}` },
+});
+check(
+  "a key without the manage scope cannot read the provider list",
+  catalogKey.status === 403,
+  `status ${catalogKey.status}`
+);
+const catalog = await request(`${base}/api/providers/catalog`, { headers: cliAuth });
+const catalogRows = catalog.json?.providers ?? [];
+check(
+  "the command token reads the provider list",
+  catalog.status === 200 && catalogRows.length > 50,
+  `status ${catalog.status}, ${catalogRows.length} providers`
+);
+check(
+  "each provider has id, name, category, hints, website and flow",
+  catalogRows.every(
+    (r) =>
+      r.id &&
+      r.name &&
+      r.category &&
+      ["api-key", "device-code", "link-and-paste", "own-page"].includes(r.flow) &&
+      "authHint" in r &&
+      "apiHint" in r &&
+      "website" in r
+  )
+);
+const flowOfProvider = (id) => catalogRows.find((r) => r.id === id)?.flow;
+check(
+  "github is device-code, claude is link-and-paste, codex is own-page, openai is api-key",
+  flowOfProvider("github") === "device-code" &&
+    flowOfProvider("claude") === "link-and-paste" &&
+    flowOfProvider("codex") === "own-page" &&
+    flowOfProvider("openai") === "api-key"
+);
+
+const linkNone = await request(`${base}/api/auth/link`, { method: "POST", body: {} });
+check(
+  "a sign-in link cannot be made without management rights",
+  linkNone.status === 401 || linkNone.status === 403,
+  `status ${linkNone.status}`
+);
+const linkKey = await request(`${base}/api/auth/link`, {
+  method: "POST",
+  headers: { authorization: `Bearer ${key}` },
+  body: {},
+});
+check(
+  "a key without the manage scope cannot make a sign-in link",
+  linkKey.status === 403,
+  `status ${linkKey.status}`
+);
+const linkMade = await request(`${base}/api/auth/link`, {
+  method: "POST",
+  headers: cliAuth,
+  body: {},
+});
+const linkUrl = String(linkMade.json?.url ?? "");
+check(
+  "the command token makes a link: {url, expiresIn: 60}",
+  linkMade.status === 200 &&
+    linkMade.json?.expiresIn === 60 &&
+    new RegExp(
+      `^http://(127\\.0\\.0\\.1|localhost):${PORT}/login/link\\?code=[A-Za-z0-9_-]{43}$`
+    ).test(linkUrl),
+  `status ${linkMade.status}, ${linkUrl.replace(/code=.*/, "code=...")}`
+);
+const loginRef = await request(`${base}/api/auth/login`, {
+  method: "POST",
+  headers: { origin: base },
+  body: { password: PASSWORD },
+});
+const loginCookie = String(loginRef.headers.get("set-cookie") ?? "");
+const flagsOf = (c) =>
+  c
+    .split(";")
+    .slice(1)
+    .map((p) => p.trim().toLowerCase())
+    .sort()
+    .join(";");
+const linkCode = linkUrl.split("code=")[1] ?? "";
+const used = await request(linkUrl);
+const usedCookie = String(used.headers.get("set-cookie") ?? "");
+check(
+  "the link signs in and goes to the dashboard",
+  [302, 303, 307].includes(used.status) &&
+    new URL(used.headers.get("location") ?? "", base).pathname === "/dashboard" &&
+    /^auth_token=[^;]+/.test(usedCookie),
+  `status ${used.status}, location ${used.headers.get("location")}`
+);
+check(
+  "its cookie has the same flags as the password sign-in",
+  usedCookie !== "" && flagsOf(usedCookie) === flagsOf(loginCookie),
+  `${flagsOf(usedCookie)} against ${flagsOf(loginCookie)}`
+);
+check(
+  "its answer carries no-referrer and no-store",
+  /no-referrer/.test(used.headers.get("referrer-policy") ?? "") &&
+    /no-store/.test(used.headers.get("cache-control") ?? ""),
+  `${used.headers.get("referrer-policy")} | ${used.headers.get("cache-control")}`
+);
+const withLinkCookie = await request(`${base}/api/providers`, {
+  headers: { cookie: usedCookie.split(";")[0] },
+});
+check(
+  "the session of the link opens the management routes",
+  withLinkCookie.status === 200,
+  `status ${withLinkCookie.status}`
+);
+const usedAgain = await request(linkUrl);
+check(
+  "a second use goes to the sign-in page and sets no cookie",
+  [302, 303, 307].includes(usedAgain.status) &&
+    new URL(usedAgain.headers.get("location") ?? "", base).pathname === "/login" &&
+    !usedAgain.headers.get("set-cookie"),
+  `status ${usedAgain.status}, location ${usedAgain.headers.get("location")}`
+);
+for (const [label, url] of [
+  ["a wrong code", `${base}/login/link?code=${"A".repeat(43)}`],
+  ["no code", `${base}/login/link`],
+]) {
+  const r = await request(url);
+  check(
+    `${label} goes to the sign-in page and sets no cookie`,
+    [302, 303, 307].includes(r.status) &&
+      new URL(r.headers.get("location") ?? "", base).pathname === "/login" &&
+      !r.headers.get("set-cookie") &&
+      !/code|invalid|expired/i.test(r.text),
+    `status ${r.status}`
+  );
+}
+const logText = fs.readFileSync(LOG, "utf8");
+check("the code is not in the server log", linkCode.length === 43 && !logText.includes(linkCode));
+
 const bearer = { authorization: `Bearer ${key}` };
 const xApiKey = { "x-api-key": key };
 const both = { ...bearer, ...xApiKey };
@@ -596,7 +739,14 @@ for (let waited = 0; waited < 90_000 && !switchedExited; waited += 250) {
 if (switchedReady) {
   const refused = spawnSync(
     process.execPath,
-    [path.join(APP_DIR, "bin/trouteai.mjs"), "key", "create", "switched off", "--port", String(PORT)],
+    [
+      path.join(APP_DIR, "bin/trouteai.mjs"),
+      "key",
+      "create",
+      "switched off",
+      "--port",
+      String(PORT),
+    ],
     { env, encoding: "utf8", timeout: 60_000 }
   );
   check(

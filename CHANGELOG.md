@@ -3,6 +3,14 @@
 What changed in each TRouteAI release. Update with `trouteai update`; on a hosting panel,
 deploy again.
 
+## Unreleased
+
+- **A list of providers for programs that manage the gateway.** `GET /api/providers/catalog` (the
+  command token or a key with the manage scope) lists every provider with how an account is added:
+  by key, by device code, by a link and a pasted code, or only in the gateway's own page.
+- **A one-time sign-in link.** `POST /api/auth/link` (same rights) answers a link that signs in once
+  within 60 seconds and opens the dashboard, so a program does not need the password.
+
 ## 1.0.11 (2026-11-25): a priority per key, conversations kept together
 
 - **A default priority per API key.** On a key's page in **API Keys**, choose whether its requests
