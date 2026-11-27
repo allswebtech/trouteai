@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { useParams } from "next/navigation";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Card, Button, CardSkeleton } from "@/shared/components";
@@ -27,6 +27,7 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import useEmailPrivacyStore from "@/store/emailPrivacyStore";
 import { useNotificationStore } from "@/store/notificationStore";
 import { resolveDashboardProviderInfo } from "../providerPageUtils";
+import { providerText } from "./providerCredentialText";
 import { type ConnectionRowConnection } from "./components/ConnectionRow";
 import { useProviderConnections } from "./hooks/useProviderConnections";
 import { useProviderSettings } from "./hooks/useProviderSettings";
@@ -46,6 +47,8 @@ import CustomModelsSection from "./components/CustomModelsSection";
 import ConnectionsListPanel from "./components/ConnectionsListPanel";
 import CoolingConnectionsPanel from "./components/CoolingConnectionsPanel";
 import ConnectionsHeaderToolbar from "./components/ConnectionsHeaderToolbar";
+import ConnectionOptions from "./components/ConnectionOptions";
+import ProviderFold from "../components/ProviderFold";
 import ProviderAccountRoutingCard from "../../settings/components/ProviderAccountRoutingCard";
 import ZedImportCard from "./components/ZedImportCard";
 import ProviderPageHeader from "./components/ProviderPageHeader";
@@ -335,6 +338,38 @@ export default function ProviderDetailPageClient() {
     notify,
   });
 
+  // A catalog Connect lands here with ?add=1: open the add form at once when there is no
+  // account yet, then drop the mark so going back does not open it again.
+  const searchParams = useSearchParams();
+  const addFormAskedRef = useRef(false);
+  useEffect(() => {
+    if (loading || addFormAskedRef.current || searchParams.get("add") !== "1") return;
+    addFormAskedRef.current = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("add");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search);
+    if (connections.length > 0 || isFreeNoAuth || isUpstreamProxyProvider) return;
+    gateConnectionFlow(
+      isCompatible
+        ? openApiKeyAddFlow
+        : isCommandCode
+          ? handleOpenCommandCodeConnect
+          : openPrimaryAddFlow
+    );
+  }, [
+    loading,
+    searchParams,
+    connections.length,
+    isFreeNoAuth,
+    isUpstreamProxyProvider,
+    isCompatible,
+    isCommandCode,
+    gateConnectionFlow,
+    openApiKeyAddFlow,
+    openPrimaryAddFlow,
+    handleOpenCommandCodeConnect,
+  ]);
+
   // Phase 1s: handleSaveApiKey extracted to hooks/useApiKeySave.ts
   const { handleSaveApiKey } = useApiKeySave({
     providerId,
@@ -490,53 +525,17 @@ export default function ProviderDetailPageClient() {
       )}
       {!isUpstreamProxyProvider && !isFreeNoAuth && (
         <Card>
-          <ProviderAccountRoutingCard
-            providerKey={providerId}
-            connectionCount={connections.length}
-          />
           <ConnectionsHeaderToolbar
             providerId={providerId}
-            providerInfo={providerInfo}
             isCompatible={isCompatible}
             isCommandCode={isCommandCode}
-            isOAuth={isOAuth}
             providerSupportsPat={providerSupportsPat}
             connections={connections}
-            batchTesting={batchTesting}
-            batchRetesting={batchRetesting}
-            retestingId={retestingId}
-            distributingProxies={distributingProxies}
-            proxyConfig={proxyConfig}
-            reorderingByAvailability={reorderingByAvailability}
-            handleReorderByAvailability={handleReorderByAvailability}
-            preferClaudeCodeForUnprefixedClaudeModels={preferClaudeCodeForUnprefixedClaudeModels}
-            claudeRoutingSettingsLoaded={claudeRoutingSettingsLoaded}
-            claudeRoutingSettingsLoadError={claudeRoutingSettingsLoadError}
-            savingClaudeRoutingPreference={savingClaudeRoutingPreference}
-            handleToggleClaudeRoutingPreference={handleToggleClaudeRoutingPreference}
-            loadClaudeRoutingSettings={loadClaudeRoutingSettings}
-            codexGlobalServiceMode={codexGlobalServiceMode}
-            codexGlobalServiceModeOptions={codexGlobalServiceModeOptions}
-            codexSettingsLoaded={codexSettingsLoaded}
-            codexSettingsLoadError={codexSettingsLoadError}
-            savingCodexGlobalServiceMode={savingCodexGlobalServiceMode}
-            handleChangeCodexGlobalServiceMode={handleChangeCodexGlobalServiceMode}
-            loadCodexSettings={loadCodexSettings}
-            onSetProxyTarget={setProxyTarget}
-            handleDistributeProxies={handleDistributeProxies}
-            handleBatchTestAll={handleBatchTestAll}
             gateConnectionFlow={gateConnectionFlow}
             openApiKeyAddFlow={openApiKeyAddFlow}
             openPrimaryAddFlow={openPrimaryAddFlow}
-            openExternalLinkFlow={openExternalLinkFlow}
             handleOpenCommandCodeConnect={handleOpenCommandCodeConnect}
             commandCodeAuthState={commandCodeAuthState}
-            onOpenOAuthModal={() => setShowOAuthModal(true)}
-            onOpenCodexCliGuide={() => setCodexCliGuideOpen(true)}
-            onOpenImportCodex={() => setImportCodexModalOpen(true)}
-            onOpenImportClaude={() => setImportClaudeModalOpen(true)}
-            onOpenImportGemini={() => setImportGeminiModalOpen(true)}
-            onOpenImportGrokCli={() => setImportGrokCliModalOpen(true)}
             t={t}
           />
 
@@ -628,10 +627,9 @@ export default function ProviderDetailPageClient() {
         </Card>
       )}
 
-      {/* Models — hidden for search providers (they don't have models) */}
+      {/* Models: closed at first. Hidden for search providers (they have no models). */}
       {!isSearchProvider && !isUpstreamProxyProvider && (
-        <Card>
-          <h2 className="text-lg font-semibold mb-4">{t("availableModels")}</h2>
+        <ProviderFold title={providerText(t, "modelsTitle", "Models")} count={models.length}>
           <ProviderModelsSection
             providerId={providerId}
             providerAlias={providerAlias}
@@ -691,8 +689,67 @@ export default function ProviderDetailPageClient() {
             getUpstreamHeadersRecordForModel={getUpstreamHeadersRecordForModel}
             t={t}
           />
+        </ProviderFold>
+      )}
 
-          {/* Custom Models — available for all providers */}
+      {/* Search provider info */}
+      {isSearchProvider && <SearchProviderCard providerId={providerId} t={t} />}
+
+      {/* Options: proxy, distribute proxies, import, custom models, playground. Closed at first. */}
+      <ProviderFold title={providerText(t, "optionsTitle", "Options")}>
+        {!isUpstreamProxyProvider && !isFreeNoAuth && (
+          <>
+            <ConnectionOptions
+              providerId={providerId}
+              providerInfo={providerInfo}
+              isCommandCode={isCommandCode}
+              isCompatible={isCompatible}
+              isOAuth={isOAuth}
+              providerSupportsPat={providerSupportsPat}
+              connections={connections}
+              batchTesting={batchTesting}
+              batchRetesting={batchRetesting}
+              retestingId={retestingId}
+              proxyConfig={proxyConfig}
+              reorderingByAvailability={reorderingByAvailability}
+              handleReorderByAvailability={handleReorderByAvailability}
+              preferClaudeCodeForUnprefixedClaudeModels={preferClaudeCodeForUnprefixedClaudeModels}
+              claudeRoutingSettingsLoaded={claudeRoutingSettingsLoaded}
+              claudeRoutingSettingsLoadError={claudeRoutingSettingsLoadError}
+              savingClaudeRoutingPreference={savingClaudeRoutingPreference}
+              handleToggleClaudeRoutingPreference={handleToggleClaudeRoutingPreference}
+              loadClaudeRoutingSettings={loadClaudeRoutingSettings}
+              codexGlobalServiceMode={codexGlobalServiceMode}
+              codexGlobalServiceModeOptions={codexGlobalServiceModeOptions}
+              codexSettingsLoaded={codexSettingsLoaded}
+              codexSettingsLoadError={codexSettingsLoadError}
+              savingCodexGlobalServiceMode={savingCodexGlobalServiceMode}
+              handleChangeCodexGlobalServiceMode={handleChangeCodexGlobalServiceMode}
+              loadCodexSettings={loadCodexSettings}
+              onSetProxyTarget={setProxyTarget}
+              handleDistributeProxies={handleDistributeProxies}
+              handleBatchTestAll={handleBatchTestAll}
+              gateConnectionFlow={gateConnectionFlow}
+              openApiKeyAddFlow={openApiKeyAddFlow}
+              openPrimaryAddFlow={openPrimaryAddFlow}
+              openExternalLinkFlow={openExternalLinkFlow}
+              handleOpenCommandCodeConnect={handleOpenCommandCodeConnect}
+              commandCodeAuthState={commandCodeAuthState}
+              onOpenOAuthModal={() => setShowOAuthModal(true)}
+              onOpenCodexCliGuide={() => setCodexCliGuideOpen(true)}
+              onOpenImportCodex={() => setImportCodexModalOpen(true)}
+              onOpenImportClaude={() => setImportClaudeModalOpen(true)}
+              onOpenImportGemini={() => setImportGeminiModalOpen(true)}
+              onOpenImportGrokCli={() => setImportGrokCliModalOpen(true)}
+              t={t}
+            />
+            <ProviderAccountRoutingCard
+              providerKey={providerId}
+              connectionCount={connections.length}
+            />
+          </>
+        )}
+        {!isSearchProvider && !isUpstreamProxyProvider && (
           <CustomModelsSection
             providerId={providerId}
             providerAlias={providerDisplayAlias}
@@ -700,14 +757,10 @@ export default function ProviderDetailPageClient() {
             onCopy={copy}
             onModelsChanged={fetchProviderModelMeta}
           />
-        </Card>
-      )}
-
-      {/* Search provider info */}
-      {isSearchProvider && <SearchProviderCard providerId={providerId} t={t} />}
-
-      {/* Playground + param filters — extracted to components/ProviderExtraPanels.tsx */}
-      <ProviderExtraPanels providerId={providerId} />
+        )}
+        {/* Playground + param filters — extracted to components/ProviderExtraPanels.tsx */}
+        <ProviderExtraPanels providerId={providerId} />
+      </ProviderFold>
 
       <ProviderModalsPanel
         providerId={providerId}

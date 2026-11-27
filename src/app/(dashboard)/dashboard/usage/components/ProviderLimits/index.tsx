@@ -794,10 +794,11 @@ export default function ProviderLimits({
       <Card padding="lg">
         <div className="text-center py-12">
           <span className="material-symbols-outlined text-[64px] opacity-15">cloud_off</span>
-          <h3 className="mt-4 text-lg font-semibold text-text-main">{t("noProviders")}</h3>
-          <p className="mt-2 text-sm text-text-muted max-w-[400px] mx-auto">
-            {t("connectProvidersForQuota")}
-          </p>
+          <h3 className="mt-4 text-lg font-semibold text-text-main">
+            {t.has("noAccountReportsLimits")
+              ? t("noAccountReportsLimits")
+              : "No account here reports limits."}
+          </h3>
         </div>
       </Card>
     );
