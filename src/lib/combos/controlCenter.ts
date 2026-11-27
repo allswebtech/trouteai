@@ -211,7 +211,11 @@ export function summarizeComboControlCenter(
     typeof health?.quotaHealth?.worstRemainingPct === "number"
       ? health.quotaHealth.worstRemainingPct
       : null;
-  const usageSkew = toNumber(health?.usageSkew?.giniCoefficient, 0);
+  // A priority combo sends to its first step on purpose: a skewed split is not a fault there.
+  const usageSkew =
+    (combo.strategy || "priority") === "priority"
+      ? 0
+      : toNumber(health?.usageSkew?.giniCoefficient, 0);
   const hasExhaustedQuota = Boolean(
     health?.quotaHealth?.providers?.some((provider) => provider.isExhausted)
   );
