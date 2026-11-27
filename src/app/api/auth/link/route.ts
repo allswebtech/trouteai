@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
-import { LOGIN_LINK_TTL_SECONDS, mintLoginLink } from "@/lib/auth/loginLink";
+import { LOGIN_LINK_TTL_SECONDS, loginLinkOrigin, mintLoginLink } from "@/lib/auth/loginLink";
 import { resolvePublicOrigin } from "@/server/origin/publicOrigin";
 
 // POST /api/auth/link - a one-time sign-in link for this gateway's own page (see
@@ -15,7 +15,11 @@ export async function POST(request: Request) {
   }
 
   const code = mintLoginLink();
-  const origin = resolvePublicOrigin(request).origin.replace(/\/+$/, "");
+  const resolved = resolvePublicOrigin(request);
+  const origin = loginLinkOrigin(resolved.origin, resolved.source, process.env.PORT).replace(
+    /\/+$/,
+    ""
+  );
   return NextResponse.json(
     { url: `${origin}/login/link?code=${code}`, expiresIn: LOGIN_LINK_TTL_SECONDS },
     { headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } }
