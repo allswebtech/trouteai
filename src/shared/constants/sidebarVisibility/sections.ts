@@ -18,6 +18,14 @@ const HOME_ITEMS: readonly SidebarItemDefinition[] = [
   },
 ];
 
+const SETTINGS_ITEM: SidebarItemDefinition = {
+  id: "settings",
+  href: "/dashboard/settings",
+  i18nKey: "settings",
+  subtitleKey: "settingsSubtitle",
+  icon: "settings",
+};
+
 // Core setup flow, in the order a user needs it: add providers → build combos →
 // create an API key → copy the endpoint.
 const SETUP_ITEMS: readonly SidebarItemDefinition[] = [
@@ -45,6 +53,7 @@ const SETUP_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "endpoints",
     href: "/dashboard/endpoint",
+    parent: "home",
     i18nKey: "endpoints",
     subtitleKey: "endpointsSubtitle",
     icon: "api",
@@ -55,6 +64,7 @@ const ROUTER_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "combos-live",
     href: "/dashboard/combos/live",
+    parent: "combos",
     i18nKey: "combosLive",
     labelFallback: "Combo Studio",
     subtitleKey: "combosLiveSubtitle",
@@ -64,6 +74,7 @@ const ROUTER_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "quota",
     href: "/dashboard/quota",
+    parent: "providers",
     i18nKey: "providerQuota",
     subtitleKey: "providerQuotaSubtitle",
     icon: "tune",
@@ -71,6 +82,7 @@ const ROUTER_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "costs-quota-share",
     href: "/dashboard/costs/quota-share",
+    parent: "analytics",
     i18nKey: "costsQuotaShare",
     subtitleKey: "costsQuotaShareSubtitle",
     icon: "pie_chart",
@@ -80,6 +92,7 @@ const ROUTER_ITEMS: readonly SidebarItemDefinition[] = [
 const PROXY_ITEM: SidebarItemDefinition = {
   id: "proxy",
   href: "/dashboard/system/proxy",
+  parent: "settings",
   i18nKey: "proxy",
   subtitleKey: "proxySubtitle",
   icon: "lan",
@@ -96,6 +109,7 @@ const ANALYTICS_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "analytics-combo-health",
     href: "/dashboard/analytics/combo-health",
+    parent: "analytics",
     i18nKey: "analyticsComboHealth",
     subtitleKey: "analyticsComboHealthSubtitle",
     icon: "monitor_heart",
@@ -103,6 +117,7 @@ const ANALYTICS_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "analytics-utilization",
     href: "/dashboard/analytics/utilization",
+    parent: "analytics",
     i18nKey: "analyticsUtilization",
     subtitleKey: "analyticsUtilizationSubtitle",
     icon: "bar_chart",
@@ -110,6 +125,7 @@ const ANALYTICS_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "cache",
     href: "/dashboard/cache",
+    parent: "analytics",
     i18nKey: "cache",
     subtitleKey: "cacheSubtitle",
     icon: "cached",
@@ -117,6 +133,7 @@ const ANALYTICS_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "provider-stats",
     href: "/dashboard/provider-stats",
+    parent: "analytics",
     i18nKey: "providerStats",
     subtitleKey: "providerStatsSubtitle",
     icon: "speed",
@@ -142,6 +159,7 @@ const LOGS_GROUP: SidebarItemGroup = {
     {
       id: "logs",
       href: "/dashboard/logs",
+      parent: "analytics",
       i18nKey: "logs",
       subtitleKey: "logsSubtitle",
       icon: "description",
@@ -149,6 +167,7 @@ const LOGS_GROUP: SidebarItemGroup = {
     {
       id: "logs-proxy",
       href: "/dashboard/logs/proxy",
+      parent: "analytics",
       i18nKey: "logsProxy",
       subtitleKey: "logsProxySubtitle",
       icon: "lan",
@@ -156,6 +175,7 @@ const LOGS_GROUP: SidebarItemGroup = {
     {
       id: "logs-console",
       href: "/dashboard/logs/console",
+      parent: "analytics",
       i18nKey: "consoleLogs",
       subtitleKey: "consoleLogsSubtitle",
       icon: "terminal",
@@ -163,6 +183,7 @@ const LOGS_GROUP: SidebarItemGroup = {
     {
       id: "logs-timeline",
       href: "/dashboard/logs/timeline",
+      parent: "analytics",
       i18nKey: "logsTimeline",
       subtitleKey: "logsTimelineSubtitle",
       icon: "view_timeline",
@@ -197,6 +218,7 @@ const COSTS_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "costs",
     href: "/dashboard/costs",
+    parent: "analytics",
     i18nKey: "costsOverview",
     subtitleKey: "costsOverviewSubtitle",
     icon: "account_balance_wallet",
@@ -204,6 +226,7 @@ const COSTS_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "costs-pricing",
     href: "/dashboard/costs/pricing",
+    parent: "analytics",
     i18nKey: "costsPricing",
     subtitleKey: "costsPricingSubtitle",
     icon: "price_change",
@@ -211,6 +234,7 @@ const COSTS_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "costs-budget",
     href: "/dashboard/costs/budget",
+    parent: "analytics",
     i18nKey: "costsBudget",
     subtitleKey: "costsBudgetSubtitle",
     icon: "savings",
@@ -226,6 +250,7 @@ const AUDIT_GROUP: SidebarItemGroup = {
     {
       id: "audit",
       href: "/dashboard/audit",
+      parent: "activity",
       i18nKey: "auditLog",
       subtitleKey: "auditLogSubtitle",
       icon: "policy",
@@ -237,6 +262,7 @@ const DEVTOOLS_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "playground",
     href: "/dashboard/playground",
+    debugOnly: true,
     i18nKey: "playground",
     subtitleKey: "playgroundSubtitle",
     icon: "science",
@@ -247,6 +273,7 @@ const CONFIGURATION_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "settings-general",
     href: "/dashboard/settings/general",
+    parent: "settings",
     i18nKey: "settingsGeneral",
     subtitleKey: "settingsGeneralSubtitle",
     icon: "tune",
@@ -254,6 +281,7 @@ const CONFIGURATION_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "settings-appearance",
     href: "/dashboard/settings/appearance",
+    parent: "settings",
     i18nKey: "settingsAppearance",
     subtitleKey: "settingsAppearanceSubtitle",
     icon: "palette",
@@ -261,6 +289,7 @@ const CONFIGURATION_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "settings-ai",
     href: "/dashboard/settings/ai",
+    parent: "settings",
     i18nKey: "settingsAi",
     subtitleKey: "settingsAiSubtitle",
     icon: "auto_awesome",
@@ -268,6 +297,7 @@ const CONFIGURATION_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "settings-routing",
     href: "/dashboard/settings/routing",
+    parent: "settings",
     i18nKey: "globalRouting",
     subtitleKey: "globalRoutingSubtitle",
     icon: "route",
@@ -275,6 +305,7 @@ const CONFIGURATION_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "settings-resilience",
     href: "/dashboard/settings/resilience",
+    parent: "settings",
     i18nKey: "settingsResilience",
     subtitleKey: "settingsResilienceSubtitle",
     icon: "health_and_safety",
@@ -282,6 +313,7 @@ const CONFIGURATION_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "settings-advanced",
     href: "/dashboard/settings/advanced",
+    parent: "settings",
     i18nKey: "settingsAdvanced",
     subtitleKey: "settingsAdvancedSubtitle",
     icon: "engineering",
@@ -289,6 +321,7 @@ const CONFIGURATION_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "settings-security",
     href: "/dashboard/settings/security",
+    parent: "settings",
     i18nKey: "settingsSecurity",
     subtitleKey: "settingsSecuritySubtitle",
     icon: "shield",
@@ -296,6 +329,7 @@ const CONFIGURATION_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "settings-feature-flags",
     href: "/dashboard/settings/feature-flags",
+    parent: "settings",
     i18nKey: "settingsFeatureFlags",
     subtitleKey: "settingsFeatureFlagsSubtitle",
     icon: "flag",
@@ -303,6 +337,7 @@ const CONFIGURATION_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "settings-cache",
     href: "/dashboard/settings/cache",
+    parent: "settings",
     i18nKey: "settingsCache",
     subtitleKey: "settingsCacheSubtitle",
     icon: "memory",
@@ -310,6 +345,7 @@ const CONFIGURATION_ITEMS: readonly SidebarItemDefinition[] = [
   {
     id: "settings-sidebar",
     href: "/dashboard/settings/sidebar",
+    parent: "settings",
     i18nKey: "settingsSidebar",
     subtitleKey: "settingsSidebarSubtitle",
     icon: "view_sidebar",
@@ -318,20 +354,50 @@ const CONFIGURATION_ITEMS: readonly SidebarItemDefinition[] = [
 
 // ─── Sections ────────────────────────────────────────────────────────────────
 
+const byId = (items: readonly SidebarItemDefinition[], id: string) =>
+  items.find((item) => item.id === id) as SidebarItemDefinition;
+
+// The menu: six pages, no group headings. Show all menus adds one group, Status.
+// Every other page keeps its address, is reached from the page it belongs to (`parent`), and is
+// listed in LEGACY_PAGE_SECTIONS only so that its title, crumb and quick search keep working.
 export const SIDEBAR_SECTIONS: readonly SidebarSectionDefinition[] = [
   {
     id: "home",
     titleKey: "home",
     titleFallback: "Home",
-    children: HOME_ITEMS,
+    children: [
+      ...HOME_ITEMS,
+      byId(SETUP_ITEMS, "providers"),
+      byId(SETUP_ITEMS, "combos"),
+      byId(SETUP_ITEMS, "api-manager"),
+      byId(ANALYTICS_ITEMS, "analytics"),
+      SETTINGS_ITEM,
+    ],
     showTitle: false,
   },
+  {
+    id: "monitoring",
+    titleKey: "status",
+    titleFallback: "Status",
+    children: [...MONITORING_ITEMS, ...SYSTEM_GROUP.items, ...DEVTOOLS_ITEMS],
+  },
+] as const;
+
+const MENU_IDS = new Set<string>(
+  SIDEBAR_SECTIONS.flatMap((section) =>
+    section.children.map((child) => (child as SidebarItemDefinition).id)
+  )
+);
+const offMenu = (items: readonly SidebarItemDefinition[]) =>
+  items.filter((item) => !MENU_IDS.has(item.id));
+
+/** Pages that are not in the menu (still answering at their old address). */
+export const LEGACY_PAGE_SECTIONS: readonly SidebarSectionDefinition[] = [
   {
     id: "setup",
     titleKey: "setupSection",
     titleFallback: "Setup",
-    children: SETUP_ITEMS,
-    defaultPinned: true,
+    children: offMenu(SETUP_ITEMS),
   },
   {
     id: "router",
@@ -343,7 +409,7 @@ export const SIDEBAR_SECTIONS: readonly SidebarSectionDefinition[] = [
     id: "analytics",
     titleKey: "analyticsSection",
     titleFallback: "Analytics",
-    children: ANALYTICS_ITEMS,
+    children: offMenu(ANALYTICS_ITEMS),
   },
   {
     id: "costs",
@@ -352,17 +418,10 @@ export const SIDEBAR_SECTIONS: readonly SidebarSectionDefinition[] = [
     children: COSTS_ITEMS,
   },
   {
-    id: "monitoring",
+    id: "devtools",
     titleKey: "monitoringSection",
     titleFallback: "Monitoring",
-    children: [...MONITORING_ITEMS, LOGS_GROUP, AUDIT_GROUP, SYSTEM_GROUP],
-  },
-  {
-    id: "devtools",
-    titleKey: "devtoolsSection",
-    titleFallback: "Dev Tools",
-    children: DEVTOOLS_ITEMS,
-    visibility: "debug",
+    children: [LOGS_GROUP, AUDIT_GROUP],
   },
   {
     id: "configuration",
@@ -371,3 +430,9 @@ export const SIDEBAR_SECTIONS: readonly SidebarSectionDefinition[] = [
     children: CONFIGURATION_ITEMS,
   },
 ] as const;
+
+/** Menu pages and the others: for page titles, crumbs and quick search. */
+export const ALL_PAGE_SECTIONS: readonly SidebarSectionDefinition[] = [
+  ...SIDEBAR_SECTIONS,
+  ...LEGACY_PAGE_SECTIONS,
+];

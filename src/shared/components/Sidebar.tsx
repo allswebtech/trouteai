@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/shared/utils/cn";
 import { getActiveSidebarHref } from "@/shared/utils/sidebarRouteMatch";
-import { filterSidebarSectionsByQuery } from "@/shared/utils/sidebarSearch";
 import {
   expandActiveSection,
   hydrateExpandedSections,
@@ -14,7 +13,6 @@ import {
 import { APP_CONFIG } from "@/shared/constants/appConfig";
 import BrandCredit from "@/shared/components/BrandCredit";
 import Button from "./Button";
-import Input from "./Input";
 import { ConfirmModal } from "./Modal";
 import { useTranslations } from "next-intl";
 import {
@@ -28,6 +26,8 @@ import {
   SIDEBAR_SECTION_ORDER_KEY,
   SIDEBAR_ITEM_ORDER_KEY,
   SIDEBAR_SECTIONS,
+  ALL_PAGE_SECTIONS,
+  getSectionItems,
   normalizeHiddenSidebarItems,
   applySectionOrder,
   applyItemOrder,
@@ -97,7 +97,6 @@ export default function Sidebar({ onClose, collapsed = false, onToggleCollapse }
   const [sidebarExpansionLoaded, setSidebarExpansionLoaded] = useState(false);
   const skipInitialActiveExpansion = useRef(false);
   const [hoveredItem, setHoveredItem] = useState<HoveredItem>(null);
-  const [searchQuery, setSearchQuery] = useState("");
 
   // Load persisted state on mount. A stored [] intentionally means "all sections collapsed".
   useEffect(() => {
@@ -194,6 +193,7 @@ export default function Sidebar({ onClose, collapsed = false, onToggleCollapse }
 
   const resolveItem = (item: SidebarItemDefinition, hidden: Set<string>) => {
     if (hidden.has(item.id)) return null;
+    if (item.debugOnly && !showDebug) return null;
     const subtitle = item.subtitleKey
       ? getSidebarLabel(item.subtitleKey, item.subtitleFallback ?? "")
       : item.subtitleFallback;
@@ -261,12 +261,15 @@ export default function Sidebar({ onClose, collapsed = false, onToggleCollapse }
   );
   const isShortMenu = allVisibleItems.length <= SHORT_MENU_MAX_ITEMS;
 
-  const activeHref = getActiveSidebarHref(pathname, allVisibleItems);
+  // A page that is not in the menu lights the menu item it belongs to (logs under Usage).
+  const activeHref = (() => {
+    const pages = ALL_PAGE_SECTIONS.flatMap(getSectionItems);
+    const own = pages.find((item) => item.href === getActiveSidebarHref(pathname, pages));
+    const owner = own?.parent ? pages.find((item) => item.id === own.parent) : own;
+    return owner?.href ?? null;
+  })();
 
-  const isSearching = searchQuery.trim().length > 0;
-  const displaySections = isSearching
-    ? filterSidebarSectionsByQuery(visibleSections, searchQuery)
-    : visibleSections;
+  const displaySections = visibleSections;
 
   // Keep the active page visible while preserving accordion semantics for unpinned sections.
   useEffect(() => {
@@ -400,7 +403,7 @@ export default function Sidebar({ onClose, collapsed = false, onToggleCollapse }
   const renderNavLink = (item) => {
     const active = !item.external && activeHref === item.href;
     const className = cn(
-      "group relative flex min-h-8 items-center gap-2.5 rounded-md text-sm transition-colors",
+      "group relative flex min-h-9 items-center gap-2.5 rounded-md text-sm transition-colors",
       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
       collapsed ? "mx-auto size-9 justify-center" : "px-2 py-1",
       active
@@ -540,34 +543,16 @@ export default function Sidebar({ onClose, collapsed = false, onToggleCollapse }
           )}
         </div>
 
-        {!collapsed && (
-          <div className="px-3 pb-2 pt-3">
-            <Input
-              type="search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={tc("search")}
-              aria-label={tc("search")}
-              icon="search"
-              className="gap-0"
-              inputClassName="py-1.5 text-xs"
-            />
-          </div>
-        )}
-
         <nav
           aria-label={t("mainNavigation")}
           className={cn(
             "min-h-0 flex-1 overflow-y-auto pb-3 custom-scrollbar",
-            collapsed ? "space-y-0.5 px-2 pt-2" : "px-3 pt-1"
+            collapsed ? "space-y-0.5 px-2 pt-2" : "px-3 pt-3"
           )}
         >
-          {sidebarSettingsLoaded && isSearching && displaySections.length === 0 && (
-            <p className="px-2 py-3 text-xs text-text-muted">{tc("noResults")}</p>
-          )}
           {(sidebarSettingsLoaded ? displaySections : []).map((section, idx) => {
             const sectionId = section.id as SidebarSectionId;
-            const isExpanded = isSearching || isShortMenu || expandedSections.has(sectionId);
+            const isExpanded = isShortMenu || expandedSections.has(sectionId);
             const isPinned = pinnedSections.has(sectionId);
             const isFirst = idx === 0;
             const sectionItems = section.children.flatMap((child: any) =>

@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import SettingsListClient from "./SettingsListClient";
 
 const LEGACY_TAB_ROUTES: Record<string, string> = {
   advanced: "/dashboard/settings/advanced",
@@ -18,14 +19,10 @@ type SettingsPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-function resolveSettingsRoute(value: string | undefined): string {
-  return value
-    ? LEGACY_TAB_ROUTES[value] || "/dashboard/settings/general"
-    : "/dashboard/settings/general";
-}
-
 export default async function SettingsPage({ searchParams }: SettingsPageProps) {
   const params = searchParams ? await searchParams : {};
   const tab = Array.isArray(params.tab) ? params.tab[0] : params.tab;
-  redirect(resolveSettingsRoute(tab));
+  // Without ?tab the page is the list of settings; any ?tab= goes to its page as before.
+  if (tab) redirect(LEGACY_TAB_ROUTES[tab] || "/dashboard/settings/general");
+  return <SettingsListClient />;
 }

@@ -15,7 +15,7 @@ import { PIN_PROVIDER_QUOTA_TO_HOME_KEY } from "@/shared/constants/homeWidgets";
 import AccountEmailVisibilitySetting from "./AccountEmailVisibilitySetting";
 
 export default function AppearanceTab() {
-  const { theme, setTheme, isDark } = useTheme();
+  const { theme, setTheme } = useTheme();
   const { colorTheme, customColor, setColorTheme, setCustomColorTheme } = useThemeStore();
   const t = useTranslations("settings");
 
@@ -140,15 +140,7 @@ export default function AppearanceTab() {
         <h3 className="text-sm font-semibold text-text-main">{t("appearance")}</h3>
       </div>
       <div className="flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="font-medium">{t("darkMode")}</p>
-            <p className="text-sm text-text-muted">{t("switchThemes")}</p>
-          </div>
-          <Toggle checked={isDark} onChange={() => setTheme(isDark ? "light" : "dark")} />
-        </div>
-
-        <div className="pt-4 border-t border-border">
+        <div>
           <div
             role="tablist"
             aria-label={t("themeSelectionAria")}

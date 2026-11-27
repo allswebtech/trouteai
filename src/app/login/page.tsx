@@ -7,12 +7,6 @@ import { Button } from "@/shared/components";
 import BrandCredit from "@/shared/components/BrandCredit";
 import { APP_CONFIG } from "@/shared/constants/appConfig";
 
-const FEATURES = [
-  { icon: "dns", title: "featureProvidersTitle", desc: "featureProvidersDesc" },
-  { icon: "layers", title: "featureCombosTitle", desc: "featureCombosDesc" },
-  { icon: "vpn_key", title: "featureKeysTitle", desc: "featureKeysDesc" },
-] as const;
-
 function BrandMark({ size = 40 }: { size?: number }) {
   return (
     <div
@@ -219,34 +213,6 @@ export default function LoginPage() {
             </div>
           </div>
         )}
-
-        {/* Product summary (quiet, below the card) */}
-        <section className="mt-8 px-1">
-          <h2 className="text-sm font-semibold text-text-main">{t("brandHeadline")}</h2>
-          <p className="mt-1 text-xs leading-relaxed text-text-muted">{t("brandSubline")}</p>
-          <ul className="mt-4 space-y-3">
-            {FEATURES.map((feature) => (
-              <li key={feature.icon} className="flex items-start gap-2.5">
-                <span
-                  className="material-symbols-outlined mt-px text-[18px] text-primary-text"
-                  aria-hidden="true"
-                >
-                  {feature.icon}
-                </span>
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-text-main">{t(feature.title)}</p>
-                  <p className="text-xs text-text-muted">{t(feature.desc)}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-5 flex items-center gap-1.5 text-[11px] text-text-muted">
-            <span className="material-symbols-outlined text-[14px]" aria-hidden="true">
-              lock
-            </span>
-            {t("selfHostedNote")}
-          </p>
-        </section>
 
         <BrandCredit className="mt-6 text-center" />
       </main>
