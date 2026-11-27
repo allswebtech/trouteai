@@ -22,18 +22,22 @@ const listed = [
   { id: "oa/gpt-x", ownedBy: "openai" },
   { id: "cc/sonnet-y", ownedBy: "claude" },
 ];
-check("a combo name wins", pickHomeModel("best", [{ provider: "openai" }], listed) === "best");
+check("a combo name wins", pickHomeModel("best", [{ owners: ["openai"] }], listed) === "best");
 check(
   "without a combo: the first model of the first account",
-  pickHomeModel(null, [{ provider: "claude" }, { provider: "openai" }], listed) === "cc/sonnet-y"
+  pickHomeModel(null, [{ owners: ["claude"] }, { owners: ["openai"] }], listed) === "cc/sonnet-y"
 );
 check(
   "a provider that needs no account is not the person's model",
-  pickHomeModel(null, [{ provider: "openai" }], listed) === "oa/gpt-x"
+  pickHomeModel(null, [{ owners: ["openai"] }], listed) === "oa/gpt-x"
 );
 check(
   "an account with no listed model is skipped for the next one",
-  pickHomeModel(null, [{ provider: "none" }, { provider: "openai" }], listed) === "oa/gpt-x"
+  pickHomeModel(null, [{ owners: ["none"] }, { owners: ["openai"] }], listed) === "oa/gpt-x"
+);
+check(
+  "a custom server is found by its prefix",
+  pickHomeModel(null, [{ owners: ["node-1", "pepper"] }], listed) === "pepper/pepper-1"
 );
 check("no account and no combo: nothing to copy", pickHomeModel(null, [], listed) === null);
 

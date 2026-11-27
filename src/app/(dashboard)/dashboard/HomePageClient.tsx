@@ -433,7 +433,13 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
     );
   }
 
-  const model = pickHomeModel(setupStatus.comboName, providerConnections, setupStatus.listed);
+  const accounts = providerConnections.map((connection) => ({
+    owners: [
+      connection.provider,
+      providerNodes.find((node) => node.id === connection.provider)?.prefix ?? "",
+    ],
+  }));
+  const model = pickHomeModel(setupStatus.comboName, accounts, setupStatus.listed);
   const needsAttention = countNeedsAttention(providerConnections);
 
   return (
