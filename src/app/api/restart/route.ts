@@ -24,7 +24,10 @@ export async function POST(request: Request) {
   // server then ends with the restart code and the command starts it again on the same port.
   if (byCommand) globalThis.__trouteaiRestart = true;
   setTimeout(() => {
-    process.kill(process.pid, "SIGTERM");
+    // On Windows a signal sent to oneself ends the process at once, without the drain and
+    // without the restart code, so the stop handler is called in the process instead.
+    if (process.platform === "win32") process.emit("SIGTERM", "SIGTERM");
+    else process.kill(process.pid, "SIGTERM");
   }, 500);
 
   return NextResponse.json({ status: "restarting" });
