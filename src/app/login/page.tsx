@@ -147,7 +147,6 @@ export default function LoginPage() {
             <h1 className="text-xl font-semibold tracking-tight text-text-main">
               {t("welcomeBack")}
             </h1>
-            <p className="mt-1 text-sm text-text-muted">{t("signInSubtitle")}</p>
 
             <form onSubmit={handleLogin} className="mt-5 space-y-4">
               <div className="space-y-1.5">
