@@ -276,7 +276,7 @@ export default function ConsoleLogViewer() {
               return (
                 <div
                   key={idx}
-                  className={`group flex items-start gap-2 px-2 py-1 rounded hover:bg-white/5 transition-colors ${
+                  className={`group flex flex-wrap items-start gap-x-2 gap-y-0.5 px-2 py-1 rounded hover:bg-white/5 sm:flex-nowrap transition-colors ${
                     level === "error" || level === "fatal" ? "bg-red-500/5" : ""
                   }`}
                 >
@@ -296,7 +296,7 @@ export default function ConsoleLogViewer() {
                   {comp && <span className="text-teal-300/80 shrink-0">[{comp}]</span>}
 
                   {/* Message */}
-                  <span className="text-zinc-200 flex-1 break-all">
+                  <span className="w-full min-w-0 text-zinc-200 [overflow-wrap:anywhere] sm:w-auto sm:flex-1">
                     {msg}
                     {/* Extra meta */}
                     {correlationId && (

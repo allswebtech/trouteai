@@ -165,6 +165,7 @@ export default function ProviderUtilizationTab() {
   const latestPoints = useMemo(() => getLatestPoints(data?.data ?? []), [data?.data]);
 
   const hasData = Boolean(data?.data.length);
+  const empty = !loading && !error && !hasData;
   const [retrying, setRetrying] = useState(false);
 
   const handleRetry = useCallback(() => {
@@ -175,41 +176,46 @@ export default function ProviderUtilizationTab() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Card
-        title={t("providerUtilizationTitle")}
-        subtitle={t(`utilizationRange.${range}`)}
-        icon="monitoring"
-        action={
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex gap-0.5 rounded-control border border-border bg-surface-2 p-0.5">
-              <button
-                onClick={() => setAggregateBy("provider")}
-                className={`flex items-center gap-1.5 whitespace-nowrap rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
-                  aggregateBy === "provider"
-                    ? "border-border bg-surface text-text-main shadow-none"
-                    : "border-transparent text-text-muted hover:text-text-main"
-                }`}
-              >
-                <span className="material-symbols-outlined text-[14px]">dns</span>
-                {t("providerUtilizationGlobalView")}
-              </button>
-              <button
-                onClick={() => setAggregateBy("connection")}
-                className={`flex items-center gap-1.5 whitespace-nowrap rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
-                  aggregateBy === "connection"
-                    ? "border-border bg-surface text-text-main shadow-none"
-                    : "border-transparent text-text-muted hover:text-text-main"
-                }`}
-              >
-                <span className="material-symbols-outlined text-[14px]">account_tree</span>
-                {t("providerUtilizationAccountSplit")}
-              </button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-text-main">
+                {t("providerUtilizationTitle")}
+              </h2>
+              <p className="text-xs text-text-muted">{t(`utilizationRange.${range}`)}</p>
             </div>
-            <TimeRangeSelector value={range} onChange={setRange} />
+      <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-0.5 rounded-control border border-border bg-surface-2 p-0.5">
+            <button
+              onClick={() => setAggregateBy("provider")}
+              className={`flex items-center gap-1.5 whitespace-nowrap rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
+                aggregateBy === "provider"
+                  ? "border-border bg-surface text-text-main shadow-none"
+                  : "border-transparent text-text-muted hover:text-text-main"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[14px]">dns</span>
+              {t("providerUtilizationGlobalView")}
+            </button>
+            <button
+              onClick={() => setAggregateBy("connection")}
+              className={`flex items-center gap-1.5 whitespace-nowrap rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
+                aggregateBy === "connection"
+                  ? "border-border bg-surface text-text-main shadow-none"
+                  : "border-transparent text-text-muted hover:text-text-main"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[14px]">account_tree</span>
+              {t("providerUtilizationAccountSplit")}
+            </button>
           </div>
-        }
-        className="overflow-hidden"
-      >
+          <TimeRangeSelector value={range} onChange={setRange} />
+        </div>
+          </div>
+
+      {empty ? (
+        <p className="py-6 text-center text-sm text-text-muted">{t("providerUtilizationNoData")}</p>
+      ) : (
+      <Card className="overflow-hidden">
         {loading && !hasData ? (
           <div className="flex min-h-80 items-center justify-center text-sm text-text-muted">
             <span className="material-symbols-outlined mr-2 animate-spin text-[18px]">
@@ -246,45 +252,6 @@ export default function ProviderUtilizationTab() {
                 </>
               )}
             </button>
-          </div>
-        ) : !hasData ? (
-          <div className="flex min-h-80 flex-col items-center justify-center gap-4 text-center">
-            <span className="material-symbols-outlined text-[40px] text-text-muted">timeline</span>
-            <div className="flex flex-col gap-2">
-              <p className="text-sm font-medium text-text-main">{t("providerUtilizationNoData")}</p>
-              <p className="max-w-md text-sm text-text-muted">
-                {t("providerUtilizationNoDataDescription")}
-              </p>
-            </div>
-            <div className="rounded-card border border-border bg-surface-2/40 p-4">
-              <p className="text-xs font-medium text-text-main">
-                {t("providerUtilizationGettingStarted")}
-              </p>
-              <ul className="mt-2 text-left text-xs text-text-muted">
-                <li className="flex items-start gap-2">
-                  <span className="material-symbols-outlined text-[14px] text-primary">
-                    check_circle
-                  </span>
-                  <span>
-                    {t.rich("providerUtilizationStepConnect", {
-                      strong: (chunks) => <strong>{chunks}</strong>,
-                    })}
-                  </span>
-                </li>
-                <li className="mt-1 flex items-start gap-2">
-                  <span className="material-symbols-outlined text-[14px] text-primary">
-                    check_circle
-                  </span>
-                  <span>{t("providerUtilizationStepEnable")}</span>
-                </li>
-                <li className="mt-1 flex items-start gap-2">
-                  <span className="material-symbols-outlined text-[14px] text-primary">
-                    check_circle
-                  </span>
-                  <span>{t("providerUtilizationStepAutomatic")}</span>
-                </li>
-              </ul>
-            </div>
           </div>
         ) : (
           <div className="flex flex-col gap-5">
@@ -374,6 +341,7 @@ export default function ProviderUtilizationTab() {
           </div>
         )}
       </Card>
+      )}
     </div>
   );
 }

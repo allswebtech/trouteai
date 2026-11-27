@@ -335,6 +335,7 @@ const REFRESH_INTERVAL_SECONDS = REFRESH_INTERVAL_MS / 1000;
 
 export default function CachePage() {
   const t = useTranslations("cache");
+  const tu = useTranslations("usageTabs");
   const tSettings = useTranslations("settings");
   const tRoot = useTranslations();
   const notify = useNotificationStore();
@@ -429,12 +430,12 @@ export default function CachePage() {
         </Button>
       </div>
 
-      <div className="inline-flex w-fit items-center gap-0.5 rounded-control border border-border bg-surface-2 p-0.5">
+      <div className="flex w-full items-stretch gap-0.5 rounded-control border border-border bg-surface-2 p-0.5 sm:inline-flex sm:w-fit sm:items-center">
         <button
           type="button"
           onClick={() => setActiveView("prompt")}
           aria-pressed={activeView === "prompt"}
-          className={`h-8 px-3 rounded-md text-sm font-medium whitespace-nowrap transition-colors ${
+          className={`min-h-11 flex-1 px-1.5 rounded-md text-xs font-medium transition-colors sm:h-8 sm:min-h-0 sm:flex-none sm:px-3 sm:text-sm sm:whitespace-nowrap ${
             activeView === "prompt"
               ? "bg-surface text-text-main border border-border dark:bg-white/10"
               : "text-text-muted hover:text-text-main"
@@ -446,7 +447,7 @@ export default function CachePage() {
           type="button"
           onClick={() => setActiveView("semantic")}
           aria-pressed={activeView === "semantic"}
-          className={`h-8 px-3 rounded-md text-sm font-medium whitespace-nowrap transition-colors ${
+          className={`min-h-11 flex-1 px-1.5 rounded-md text-xs font-medium transition-colors sm:h-8 sm:min-h-0 sm:flex-none sm:px-3 sm:text-sm sm:whitespace-nowrap ${
             activeView === "semantic"
               ? "bg-surface text-text-main border border-border dark:bg-white/10"
               : "text-text-muted hover:text-text-main"
@@ -458,7 +459,7 @@ export default function CachePage() {
           type="button"
           onClick={() => setActiveView("reasoning")}
           aria-pressed={activeView === "reasoning"}
-          className={`h-8 px-3 rounded-md text-sm font-medium whitespace-nowrap transition-colors ${
+          className={`min-h-11 flex-1 px-1.5 rounded-md text-xs font-medium transition-colors sm:h-8 sm:min-h-0 sm:flex-none sm:px-3 sm:text-sm sm:whitespace-nowrap ${
             activeView === "reasoning"
               ? "bg-surface text-text-main border border-border dark:bg-white/10"
               : "text-text-muted hover:text-text-main"
@@ -484,7 +485,11 @@ export default function CachePage() {
         />
       )}
 
-      {!loading && stats && activeView === "prompt" && (
+      {!loading && stats && activeView === "prompt" && !(pc && pc.totalRequests > 0) && (
+        <p className="py-6 text-center text-sm text-text-muted">{tu("noCacheYet")}</p>
+      )}
+
+      {!loading && stats && activeView === "prompt" && pc && pc.totalRequests > 0 && (
         <Card>
           <div className="flex flex-col gap-6 p-5 md:p-6">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
