@@ -3,7 +3,17 @@
 What changed in each TRouteAI release. Update with `trouteai update`; on a hosting panel,
 deploy again.
 
-## 1.0.12 (2026-11-27): easier pages, a sign-in link, a stricter local rule
+## 1.0.13 (2026-11-27): easier pages, a sign-in link, a stricter local rule
+
+Version 1.0.12 was tagged but never published: its release stopped at a failing test, so
+everything below is new in 1.0.13.
+
+### Fixed in this release
+
+- **The sign-in link names the port the gateway listens on.** When the configured public address
+  pointed at this computer (`localhost` or `127.0.0.1`) with another port than the one the gateway
+  listens on, for example a leftover `http://localhost:20017` while it runs on another port, the
+  link led to a dead address. It now uses the listening port. A real public address is unchanged.
 
 ### Easier to use
 
