@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 
 import { carriesForwardingHeader, isCliTokenDisabled, matchesCliTokenSecret } from "@/lib/cliToken";
+import { isLocalRequest } from "../../../scripts/dev/request-locality.mjs";
 import { AUTHZ_HEADER_PEER_LOCALITY, CLI_TOKEN_HEADER } from "@/server/authz/headers";
 
 type RequestWithPeer = Request & {
@@ -43,8 +44,14 @@ function requestPeerAddress(request: RequestWithPeer): string | null {
 async function isLocalCliRequest(request: RequestWithPeer): Promise<boolean> {
   // 1. Direct / non-middleware callers (raw Node, unit tests) may carry a real
   //    socket peer.
+  //    Its Host must be this computer's loopback too (request-locality.mjs, the one decision).
   const peerAddress = requestPeerAddress(request);
-  if (peerAddress) return isLoopback(peerAddress);
+  if (peerAddress) {
+    return isLocalRequest({
+      socketAddress: peerAddress,
+      get: (name: string) => request.headers?.get(name) ?? null,
+    });
+  }
 
   // 2. A proxy or tunnel on this computer connects from loopback; its headers say the caller
   //    is elsewhere (the socket stamp only looks at x-forwarded-for / x-real-ip).

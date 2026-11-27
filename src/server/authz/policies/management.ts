@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { isModelSyncInternalRequest } from "../../../shared/services/modelSyncScheduler";
 import { isAuthRequired, isDashboardSessionAuthenticated } from "../../../shared/utils/apiAuth";
 import { carriesForwardingHeader, matchesCliTokenSecret } from "../../../lib/cliToken";
+import { isLocalHostHeader } from "../../../../scripts/dev/request-locality.mjs";
 import type { AuthOutcome, PolicyContext, RoutePolicy } from "../context";
 import { allow, reject } from "../context";
 import { extractApiKey, isValidApiKey } from "../../../sse/services/auth";
@@ -49,8 +50,22 @@ function isViaProxyRequest(ctx: PolicyContext): boolean {
   );
 }
 
+function hasValidStamp(ctx: PolicyContext): boolean {
+  return (
+    resolveStampedPeer(
+      ctx.request.headers?.get?.(PEER_IP_HEADER) ?? null,
+      process.env.TROUTEAI_PEER_STAMP_TOKEN
+    ) !== null
+  );
+}
+
 function isLoopbackRequest(ctx: PolicyContext): boolean {
   if (isViaProxyRequest(ctx)) return false;
+  // With the server's stamp the marker above already holds the Host verdict (request-locality.mjs).
+  // Without a valid stamp (a direct caller) the Host must be this computer's loopback here.
+  if (!hasValidStamp(ctx) && !isLocalHostHeader(ctx.request.headers?.get?.("host") ?? null)) {
+    return false;
+  }
   const peerAddress = requestPeerAddress(ctx);
   return peerAddress ? isLoopbackHost(peerAddress) : false;
 }

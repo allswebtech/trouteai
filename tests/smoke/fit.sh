@@ -16,7 +16,8 @@ MOCK_PORT=${FIT_MOCK_PORT:-21175}
 cd "$APP_DIR" || exit 1
 
 STATUS=0
-sh "$APP_DIR/tests/checks/run.sh" check-fit.mts check-cli-token.mts check-provider-catalog.mts check-login-link.mts check-shared-state.mts || STATUS=1
+sh "$APP_DIR/tests/checks/run.sh" check-fit.mts check-cli-token.mts check-provider-catalog.mts check-login-link.mts check-shared-state.mts check-local-request.mts || STATUS=1
 node "$HERE/fit-e2e.mjs" "$PORT" "$MOCK_PORT" || STATUS=1
 node "$HERE/key-removal-e2e.mjs" "${KEYGONE_PORT:-21176}" || STATUS=1
+node "$HERE/local-host-e2e.mjs" "${LOCALHOST_PORT:-21177}" || STATUS=1
 exit $STATUS
