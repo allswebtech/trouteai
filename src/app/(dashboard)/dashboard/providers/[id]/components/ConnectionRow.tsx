@@ -214,7 +214,13 @@ function getStatusPresentation(
     };
   }
 
-  if (effectiveStatus === "active" || effectiveStatus === "success") {
+  // A new account nobody has tested yet is not a failure: the list above counts it as working.
+  if (
+    effectiveStatus === "active" ||
+    effectiveStatus === "success" ||
+    effectiveStatus === "unknown" ||
+    !effectiveStatus
+  ) {
     return {
       statusVariant: "success",
       statusLabel: t("statusConnected"),
