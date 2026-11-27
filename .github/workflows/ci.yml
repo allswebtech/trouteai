@@ -1,4 +1,5 @@
-# Lint, type check (against the committed baseline), build, then every offline test suite.
+# Lint, type check (against the committed baseline), build, then every offline test suite, in the
+# order the Release workflow runs them.
 # No secrets and no accounts: the tests run against local mock providers on localhost.
 name: CI
 
@@ -17,7 +18,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       NEXT_TELEMETRY_DISABLED: "1"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
@@ -43,8 +44,7 @@ jobs:
       - name: Type check (no new errors)
         run: npm run typecheck:baseline
 
-      - name: Smoke test (npm test)
-        run: npm test
-
-      - name: Context size, usage-limit routing and the other offline checks
-        run: sh tests/all.sh context quota checks
+      # The same step, in the same folder after the same build, as the Release workflow runs before
+      # it publishes: a test that passes here passes there.
+      - name: Tests (npm run test:all)
+        run: npm run test:all

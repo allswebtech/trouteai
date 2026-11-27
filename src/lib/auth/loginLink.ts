@@ -41,3 +41,29 @@ export function consumeLoginLink(code: unknown, now = Date.now()): boolean {
 export function pendingLoginLinks(): number {
   return pending.size;
 }
+
+/**
+ * The address a sign-in link names. A link is opened on this computer, so a configured public
+ * address that points at this computer's own loopback but at another port than the one the
+ * server listens on (a leftover default in an environment file) is a wrong setting: the link
+ * then names the listening port. A real public address, and no configured address, are unchanged.
+ */
+export function loginLinkOrigin(
+  origin: string,
+  source: string,
+  listenPort: string | undefined
+): string {
+  if (source !== "configured" || !listenPort || !/^\d{1,5}$/.test(listenPort)) return origin;
+  try {
+    const url = new URL(origin);
+    const host = url.hostname.replace(/^\[(.*)\]$/, "$1").toLowerCase();
+    const loopback = host === "localhost" || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host);
+    if (!loopback || url.protocol !== "http:" || url.port === "" || url.port === listenPort) {
+      return origin;
+    }
+    url.port = listenPort;
+    return url.origin;
+  } catch {
+    return origin;
+  }
+}
