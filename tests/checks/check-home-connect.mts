@@ -21,6 +21,7 @@ const listed = [
   { id: "pepper/pepper-1", ownedBy: "chipotle" },
   { id: "oa/gpt-x", ownedBy: "openai" },
   { id: "cc/sonnet-y", ownedBy: "claude" },
+  { id: "standin/s-1", ownedBy: "standin" },
 ];
 check("a combo name wins", pickHomeModel("best", [{ owners: ["openai"] }], listed) === "best");
 check(
@@ -37,7 +38,7 @@ check(
 );
 check(
   "a custom server is found by its prefix",
-  pickHomeModel(null, [{ owners: ["node-1", "pepper"] }], listed) === "pepper/pepper-1"
+  pickHomeModel(null, [{ owners: ["node-1", "standin"] }], listed) === "standin/s-1"
 );
 check("no account and no combo: nothing to copy", pickHomeModel(null, [], listed) === null);
 
