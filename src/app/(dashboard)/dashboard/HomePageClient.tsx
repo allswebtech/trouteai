@@ -433,11 +433,7 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
     );
   }
 
-  const model = pickHomeModel(
-    setupStatus.comboName,
-    setupStatus.listedIds,
-    setupStatus.comboNames
-  );
+  const model = pickHomeModel(setupStatus.comboName, providerConnections, setupStatus.listed);
   const needsAttention = countNeedsAttention(providerConnections);
 
   return (

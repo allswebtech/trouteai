@@ -15,14 +15,27 @@ function check(name: string, ok: boolean, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
 }
 
-const listed = ["best", "auto/free", "oa/gpt-x", "cc/sonnet-y"];
-check("a combo name wins", pickHomeModel("best", listed, ["best", "auto/free"]) === "best");
+const listed = [
+  { id: "best", ownedBy: "combo" },
+  { id: "auto/free", ownedBy: "combo" },
+  { id: "pepper/pepper-1", ownedBy: "chipotle" },
+  { id: "oa/gpt-x", ownedBy: "openai" },
+  { id: "cc/sonnet-y", ownedBy: "claude" },
+];
+check("a combo name wins", pickHomeModel("best", [{ provider: "openai" }], listed) === "best");
 check(
-  "without a combo: the first provider/model that is not a combo",
-  pickHomeModel(null, listed, ["best", "auto/free"]) === "oa/gpt-x"
+  "without a combo: the first model of the first account",
+  pickHomeModel(null, [{ provider: "claude" }, { provider: "openai" }], listed) === "cc/sonnet-y"
 );
-check("a bare name is not a provider/model", pickHomeModel(null, ["best"], []) === null);
-check("nothing listed: nothing to copy", pickHomeModel(null, [], []) === null);
+check(
+  "a provider that needs no account is not the person's model",
+  pickHomeModel(null, [{ provider: "openai" }], listed) === "oa/gpt-x"
+);
+check(
+  "an account with no listed model is skipped for the next one",
+  pickHomeModel(null, [{ provider: "none" }, { provider: "openai" }], listed) === "oa/gpt-x"
+);
+check("no account and no combo: nothing to copy", pickHomeModel(null, [], listed) === null);
 
 check(
   "needs attention counts only failing accounts",
