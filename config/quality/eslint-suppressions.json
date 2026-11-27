@@ -199,7 +199,7 @@
       "count": 1
     },
     "react-hooks/set-state-in-effect": {
-      "count": 7
+      "count": 6
     }
   },
   "src/app/(dashboard)/dashboard/costs/components/ApiKeyUsageLimitCard.tsx": {
