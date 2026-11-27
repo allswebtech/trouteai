@@ -84,7 +84,7 @@ check(
 );
 check(
   "an unknown listening port leaves the address alone",
-  own("http://localhost:20017", "configured", undefined) === "http://localhost:20017"
+  loginLinkOrigin("http://localhost:20017", "configured", undefined) === "http://localhost:20017"
 );
 check(
   "an https loopback base is unchanged",
