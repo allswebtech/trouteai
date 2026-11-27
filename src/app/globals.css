@@ -695,7 +695,7 @@ select option {
   [role="tab"],
   select,
   summary,
-  aside nav a,
+  aside a:not(.sr-only),
   header a {
     min-height: 44px;
     min-width: 44px;
