@@ -1117,9 +1117,11 @@ export default function CombosPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold">{t("title")}</h1>
-        <Button icon="add" onClick={() => setShowCreateModal(true)} data-testid="combos-new">
-          {getI18nOrFallback(t, "newCombo", "New combo")}
-        </Button>
+        {combos.length > 0 && (
+          <Button icon="add" onClick={() => setShowCreateModal(true)} data-testid="combos-new">
+            {getI18nOrFallback(t, "newCombo", "New combo")}
+          </Button>
+        )}
       </div>
 
       {recentlyCreatedCombo && (

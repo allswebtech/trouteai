@@ -1030,9 +1030,6 @@ export default function ApiManagerPageClient() {
                 "Create a key, then paste it into your app to start using TRouteAI."
               )}
             </p>
-            <Button icon="add" onClick={openCreateKeyModal}>
-              {t("createFirstKey")}
-            </Button>
           </div>
         ) : filteredKeys.length === 0 ? (
           <div className="text-center py-12 border border-dashed border-border rounded-lg">

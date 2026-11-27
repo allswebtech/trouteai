@@ -70,11 +70,11 @@ export default function Breadcrumbs() {
   return (
     <nav
       aria-label={t("ariaLabel")}
-      className="mb-4 flex min-w-0 flex-wrap items-center gap-1 text-xs text-text-muted"
+      className="-mt-2 mb-2 flex min-w-0 flex-wrap items-center gap-1 text-xs text-text-muted"
     >
       <Link
         href={parent.href}
-        className="truncate rounded-sm transition-colors hover:text-text-main focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+        className="inline-flex min-h-11 items-center truncate rounded-sm transition-colors hover:text-text-main focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
         title={label(parent)}
       >
         {label(parent)}

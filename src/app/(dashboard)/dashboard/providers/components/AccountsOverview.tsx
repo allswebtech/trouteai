@@ -143,6 +143,7 @@ export default function AccountsOverview({ entries, showLimits, onAdd }: Account
               </Link>
             </li>
           )}
+          {connected.length > 0 && (
           <li>
             <Link href="/dashboard/media-providers" className={rowClass}>
               <span className="material-symbols-outlined text-[20px] text-text-muted" aria-hidden="true">
@@ -159,6 +160,7 @@ export default function AccountsOverview({ entries, showLimits, onAdd }: Account
               </span>
             </Link>
           </li>
+          )}
       </ul>
     </section>
   );

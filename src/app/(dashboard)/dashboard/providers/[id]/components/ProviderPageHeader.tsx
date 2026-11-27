@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import ProviderIcon from "@/shared/components/ProviderIcon";
-import { getHeaderIconProviderId, providerText } from "../providerPageHelpers";
+import { getHeaderIconProviderId } from "../providerPageHelpers";
 import type { ProviderMessageTranslator } from "../providerPageHelpers";
 
 interface ProviderInfo {
@@ -38,13 +37,6 @@ export default function ProviderPageHeader({
 }: ProviderPageHeaderProps) {
   return (
     <div>
-      <Link
-        href="/dashboard/providers"
-        className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-primary transition-colors mb-4"
-      >
-        <span className="material-symbols-outlined text-lg">arrow_back</span>
-        {providerText(t, "backToAccounts", "Back to Accounts")}
-      </Link>
       <div className="flex items-center gap-4">
         <div
           className="rounded-lg flex items-center justify-center"
