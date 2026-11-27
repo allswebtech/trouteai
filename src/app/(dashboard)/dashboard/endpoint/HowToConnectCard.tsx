@@ -25,7 +25,7 @@ const EXAMPLE_TABS: ReadonlyArray<{ id: ExampleTabId; label: string; labelKey?: 
 ];
 
 const API_KEY_PLACEHOLDER = "YOUR_API_KEY";
-const MODEL_PLACEHOLDER = "your-combo";
+const MODEL_PLACEHOLDER = "provider/model";
 const API_KEYS_PAGE_HREF = "/dashboard/api-manager";
 
 // Code snippets are intentionally not translated.
@@ -234,8 +234,8 @@ export default function HowToConnectCard({ apiBaseUrl }: Readonly<HowToConnectCa
       body: (
         <p>
           {tr(
-            "howToConnectStepModelText",
-            "Type the name of one of your combos (or any model id) as the model."
+            "howToConnectModelHome",
+            "Use the model name shown on Home (a combo name, or provider/model)."
           )}
         </p>
       ),
@@ -347,8 +347,8 @@ export default function HowToConnectCard({ apiBaseUrl }: Readonly<HowToConnectCa
 
         <p className="mt-3 text-xs text-text-muted">
           {tr(
-            "howToConnectReplaceHint",
-            "Replace YOUR_API_KEY with your key and your-combo with your combo name."
+            "howToConnectReplaceHome",
+            "Replace YOUR_API_KEY with your key and provider/model with the model shown on Home."
           )}
         </p>
       </div>

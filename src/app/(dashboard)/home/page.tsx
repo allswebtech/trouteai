@@ -20,8 +20,8 @@ export default async function HomePage() {
   const envFilePath = isBootstrapped ? path.join(resolveDataDir(), "server.env") : undefined;
   return (
     <>
-      {isBootstrapped && <BootstrapBanner envFilePath={envFilePath} />}
       <HomePageClient machineId={machineId} />
+      {isBootstrapped && <BootstrapBanner envFilePath={envFilePath} />}
     </>
   );
 }

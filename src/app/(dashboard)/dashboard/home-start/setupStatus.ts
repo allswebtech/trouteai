@@ -1,14 +1,21 @@
-// Data for the Home "Get started" checklist and "Connect your app" card. Uses the existing
-// management API only (GET /api/combos -> { combos, total }, GET /api/keys -> { keys, total }).
+import type { ListedModel } from "./homeConnect";
+
+// Data for the Home "Connect a coding tool" card. Uses the existing API only (GET /api/combos,
+// GET /api/keys, GET /v1/models).
 
 export type HomeSetupStatus = {
   comboCount: number;
   keyCount: number;
-  /** Name of the first combo (prefers a visible one), used in the curl example. */
+  /** Name of the first combo (prefers a visible one), used as the model to copy. */
   comboName: string | null;
+  /** What the gateway lists at /v1/models (what can be served now). */
+  listed: ListedModel[];
 };
 
-export const EMPTY_SETUP_STATUS: HomeSetupStatus = { comboCount: 0, keyCount: 0, comboName: null };
+export const EMPTY_SETUP_STATUS: HomeSetupStatus = { comboCount: 0, keyCount: 0,
+  comboName: null,
+  listed: [],
+};
 
 type JsonRecord = Record<string, unknown>;
 
@@ -28,10 +35,18 @@ function countFrom(total: unknown, fallback: number): number {
 
 /** Loads combo and API key counts. Never throws: a failed request counts as 0. */
 export async function fetchHomeSetupStatus(): Promise<HomeSetupStatus> {
-  const [combosData, keysData] = await Promise.all([
+  const [combosData, keysData, listData] = await Promise.all([
     fetch("/api/combos?limit=50").then(readJson, () => null),
     fetch("/api/keys?limit=1").then(readJson, () => null),
+    fetch("/v1/models").then(readJson, () => null),
   ]);
+  const listed: ListedModel[] = (
+    Array.isArray(listData?.data) ? (listData.data as JsonRecord[]) : []
+  ).flatMap((m) =>
+    typeof m?.id === "string" && typeof m?.owned_by === "string"
+      ? [{ id: m.id, ownedBy: m.owned_by }]
+      : []
+  );
 
   const combos = Array.isArray(combosData?.combos) ? (combosData.combos as JsonRecord[]) : [];
   const keys = Array.isArray(keysData?.keys) ? keysData.keys : [];
@@ -42,5 +57,6 @@ export async function fetchHomeSetupStatus(): Promise<HomeSetupStatus> {
     comboCount: countFrom(combosData?.total, combos.length),
     keyCount: countFrom(keysData?.total, keys.length),
     comboName: firstCombo ? (firstCombo.name as string) : null,
+    listed,
   };
 }

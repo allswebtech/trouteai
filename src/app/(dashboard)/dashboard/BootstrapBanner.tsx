@@ -23,7 +23,7 @@ export default function BootstrapBanner({ envFilePath }: { envFilePath?: string 
   return (
     <div
       role="status"
-      className="mb-4 flex items-start gap-3 rounded-card border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-text-main"
+      className="mt-6 flex items-start gap-3 rounded-card border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-text-main"
     >
       <span
         className="material-symbols-outlined text-[18px] text-warning shrink-0"
@@ -49,7 +49,7 @@ export default function BootstrapBanner({ envFilePath }: { envFilePath?: string 
       <button
         type="button"
         onClick={() => setDismissed(true)}
-        className="ml-1 flex size-7 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors hover:bg-warning/15 hover:text-text-main focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+        className="ml-1 flex size-11 shrink-0 sm:size-7 items-center justify-center rounded-control text-text-muted transition-colors hover:bg-warning/15 hover:text-text-main focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
         aria-label={t("bootstrapBannerDismiss")}
       >
         <span className="material-symbols-outlined text-[18px]" aria-hidden="true">

@@ -31,7 +31,7 @@ export default function AppearanceTab() {
   );
   const pinProviderQuotaToHome = settings.pinProviderQuotaToHome === true;
   const showQuickStartOnHome = settings.showQuickStartOnHome !== false;
-  const showProviderTopologyOnHome = settings.showProviderTopologyOnHome !== false;
+  const showProviderTopologyOnHome = settings.showProviderTopologyOnHome === true;
   const autoRefreshProviderQuota = settings.autoRefreshProviderQuota === true;
   const autoRefreshProviderQuotaInterval = Number.isFinite(
     settings.autoRefreshProviderQuotaInterval
