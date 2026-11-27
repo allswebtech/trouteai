@@ -219,6 +219,9 @@ export default function ApiManagerPageClient() {
   const [allCombos, setAllCombos] = useState<ComboOption[]>([]);
   const [allConnections, setAllConnections] = useState<ProviderConnection[]>([]);
   const [loading, setLoading] = useState(true);
+  // On a phone each key row is one line; its actions open under it (one key at a time).
+  const [openKeyActionsId, setOpenKeyActionsId] = useState<string | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   // Create-key modal: optional settings stay collapsed so the simple path is Name → Create.
   const [showCreateAdvanced, setShowCreateAdvanced] = useState(false);
@@ -970,48 +973,37 @@ export default function ApiManagerPageClient() {
         </div>
       )}
 
-      {/* Keys List Card — the header carries the page's main action (Create API key). */}
+      {/* Keys List Card — the header carries the page's main action (Create key). */}
       <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center size-10 rounded-lg bg-warning/10 shrink-0">
-              <span className="material-symbols-outlined text-xl text-warning">vpn_key</span>
-            </div>
-            <div>
-              <h3 className="font-semibold">
-                {t("registeredKeys")}
-                {isFiltered && (
-                  <span className="ml-1.5 text-sm font-normal text-text-muted">
-                    ({t("shownOf", { shown: filteredKeys.length, total: keys.length })})
-                  </span>
-                )}
-                {!isFiltered && (
-                  <span className="ml-1.5 text-sm font-normal text-text-muted">
-                    ({keys.length})
-                  </span>
-                )}
-              </h3>
-              <p className="text-xs text-text-muted">
-                {keys.length === 1
-                  ? t("keyRegistered", { count: keys.length })
-                  : t("keysRegistered", { count: keys.length })}
-              </p>
-            </div>
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <h1 className="text-2xl font-semibold">
+            {tr("keysTitle", "Keys")}
+            <span className="ml-1.5 text-sm font-normal text-text-muted">
+              {isFiltered
+                ? `(${t("shownOf", { shown: filteredKeys.length, total: keys.length })})`
+                : `(${keys.length})`}
+            </span>
+          </h1>
+          <div className="flex items-center gap-2">
+            {keys.length > 10 && (
+              <Button
+                variant="secondary"
+                icon="filter_list"
+                onClick={() => setShowFilters((v) => !v)}
+                aria-expanded={showFilters || isFiltered}
+                data-testid="keys-filter-toggle"
+              >
+                {tr("filterButton", "Filter")}
+              </Button>
+            )}
+            <Button icon="add" onClick={openCreateKeyModal} data-testid="keys-create">
+              {tr("createKeyShort", "Create key")}
+            </Button>
           </div>
-          <Button icon="add" onClick={openCreateKeyModal}>
-            {t("createKey")}
-          </Button>
         </div>
 
-        <p className="text-sm text-text-muted mb-4">
-          {tr(
-            "keysPlainIntro",
-            "An API key lets an app use TRouteAI. Make one key per app, so you can see its usage or turn it off anytime."
-          )}
-        </p>
-
-        {/* Filter Bar — shown when there are keys, below the main action */}
-        {keys.length > 0 && (
+        {/* Filter Bar: only with many keys, behind one Filter press */}
+        {keys.length > 10 && (showFilters || isFiltered) && (
           <ApiKeyFilterBar
             className="mb-4 bg-bg-subtle shadow-none"
             counts={keyCounts}
@@ -1081,269 +1073,384 @@ export default function ApiManagerPageClient() {
               const groups = quotaGroupsForKey(key);
               const visibleGroups = groups.slice(0, 3);
               const extraGroupCount = groups.length - visibleGroups.length;
-              return (
-                <div
-                  key={key.id}
-                  className="grid grid-cols-12 gap-4 px-4 py-3 border-b border-border last:border-b-0 hover:bg-surface-2 transition-colors group min-w-[760px]"
-                >
-                  <div className="col-span-2 flex items-center gap-2">
+              const badges = (
+                <div className="flex flex-col items-start gap-1">
+                  {/* QUOTA differentiation chips — prepended before existing badges */}
+                  {keyIsQuota && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
+                      {t("quotaModeOnly")}
+                    </span>
+                  )}
+                  {keyIsQuota &&
+                    visibleGroups.map((groupName) => (
+                      <span
+                        key={groupName}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium truncate max-w-full"
+                      >
+                        {groupName}
+                      </span>
+                    ))}
+                  {keyIsQuota && extraGroupCount > 0 && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
+                      +{extraGroupCount}
+                    </span>
+                  )}
+                  {/* Existing badges */}
+                  {isRestricted ? (
+                    <button
+                      onClick={() => handleOpenPermissions(key)}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-warning/10 text-warning text-xs font-medium hover:bg-warning/20 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">lock</span>
+                      {t("modelsCount", { count: key.allowedModels!.length })}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleOpenPermissions(key)}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-success/10 text-success text-xs font-medium hover:bg-success/20 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">lock_open</span>
+                      {t("allModels")}
+                    </button>
+                  )}
+                  {hasConnectionRestrictions && (
+                    <button
+                      onClick={() => handleOpenPermissions(key)}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 text-primary-text text-xs font-medium hover:bg-primary/20 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">cable</span>
+                      {key.allowedConnections!.length} conn
+                    </button>
+                  )}
+                  {hasComboRestrictions && (
+                    <button
+                      onClick={() => handleOpenPermissions(key)}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 text-primary-text text-xs font-medium hover:bg-primary/20 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">hub</span>
+                      {key.allowedCombos!.length} combos
+                    </button>
+                  )}
+                  {noLogEnabled && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">visibility_off</span>
+                      No-Log
+                    </span>
+                  )}
+                  {key.autoResolve && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">auto_fix_high</span>
+                      Auto-Resolve
+                    </span>
+                  )}
+                  {hasJsonStreamDefault && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">data_object</span>
+                      {t("streamDefaultBadge")}
+                    </span>
+                  )}
+                  {hasLocalUsageCommand && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-2 text-text-muted text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">terminal</span>
+                      {t("localUsageCommandBadge")}
+                    </span>
+                  )}
+                  {key.usageLimitEnabled === true && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-success/10 text-success text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">paid</span>
+                      USD quota
+                    </span>
+                  )}
+                  {hasProviderQuotaBypass && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-warning/10 text-warning text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">alt_route</span>
+                      Bypass quota policy
+                    </span>
+                  )}
+                  {hasSessionLimit && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">group</span>
+                      Sessions: {activeSessions}/{maxSessions}
+                    </span>
+                  )}
+                  {deviceCount > 0 && (
+                    <span
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium"
+                      title={t("devicesTooltip", { count: deviceCount })}
+                    >
+                      <span className="material-symbols-outlined text-[12px]">devices</span>
+                      {t("devicesCount", { count: deviceCount })}
+                    </span>
+                  )}
+                  {hasThrottle && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-warning/10 text-warning text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">speed</span>+
+                      {throttleDelayMs}ms
+                    </span>
+                  )}
+                  {hasManageScope && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-error/10 text-error text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">
+                        admin_panel_settings
+                      </span>
+                      manage
+                    </span>
+                  )}
+                  {!keyIsActive && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-error/10 text-error text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">block</span>
+                      {t("disabled")}
+                    </span>
+                  )}
+                  {hasSchedule && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-warning/10 text-warning text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">schedule</span>
+                      {t("scheduleActive")}
+                    </span>
+                  )}
+                  {key.isBanned && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-error/10 text-error text-[11px] font-bold animate-pulse">
+                      <span className="material-symbols-outlined text-[12px]">gavel</span>
+                      BANNED
+                    </span>
+                  )}
+                  {key.expiresAt && new Date(key.expiresAt).getTime() < Date.now() && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-2 text-text-muted text-[11px] font-medium">
+                      <span className="material-symbols-outlined text-[12px]">event_busy</span>
+                      EXPIRED
+                    </span>
+                  )}
+                </div>
+              );
+              const actionsOpen = openKeyActionsId === key.id;
+              const revealed = visibleKeys.has(key.id);
+              const compactRow = (
+                <div className="md:hidden px-3 py-2 border-b border-border last:border-b-0">
+                  <div className="flex items-center gap-2 min-h-11">
                     <span
                       className={`material-symbols-outlined text-sm ${isRestricted ? "text-warning" : "text-success"}`}
                     >
                       {isRestricted ? "lock" : "lock_open"}
                     </span>
-                    <span className="text-sm font-medium truncate" title={key.name}>
-                      {key.name}
-                    </span>
-                  </div>
-                  <div className="col-span-3 flex items-center gap-1.5">
-                    <code className="text-sm text-text-muted font-mono truncate">
-                      {visibleKeys.has(key.id) ? (revealedKeys.get(key.id) ?? key.key) : key.key}
-                    </code>
-                    {allowKeyReveal ? (
-                      <>
-                        <button
-                          onClick={() => handleToggleKeyVisibility(key.id)}
-                          className="p-1 text-text-muted hover:text-primary-text transition-colors shrink-0"
-                          title={visibleKeys.has(key.id) ? t("hideKey") : t("showKey")}
-                          aria-label={visibleKeys.has(key.id) ? t("hideKey") : t("showKey")}
-                          aria-pressed={visibleKeys.has(key.id)}
-                        >
-                          <span className="material-symbols-outlined text-[14px]">
-                            {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
-                          </span>
-                        </button>
-                        <button
-                          onClick={() => handleCopyExistingKey(key.id)}
-                          className="p-1 text-text-muted hover:text-primary-text transition-colors shrink-0"
-                          title={tc("copy")}
-                          aria-label={tc("copy")}
-                        >
-                          <span className="material-symbols-outlined text-[14px]">
-                            {copied === `existing_key_${key.id}` ? "check" : "content_copy"}
-                          </span>
-                        </button>
-                      </>
-                    ) : (
-                      <span
-                        className="p-1 text-text-muted opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all shrink-0 cursor-help"
-                        title={t("keyOnlyAvailableAtCreation")}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate" title={key.name}>
+                        {key.name}
+                        {!keyIsActive && (
+                          <span className="ml-2 text-[11px] text-error">{t("disabled")}</span>
+                        )}
+                        {key.isBanned && (
+                          <span className="ml-2 text-[11px] font-bold text-error">BANNED</span>
+                        )}
+                      </p>
+                      <code className="block text-xs text-text-muted font-mono truncate">
+                        {revealed ? (revealedKeys.get(key.id) ?? key.key) : key.key}
+                      </code>
+                    </div>
+                    {allowKeyReveal && (
+                      <button
+                        type="button"
+                        onClick={() => handleCopyExistingKey(key.id)}
+                        className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-surface-2 hover:text-primary-text"
+                        title={tc("copy")}
+                        aria-label={tc("copy")}
                       >
-                        <span className="material-symbols-outlined text-[14px]">lock</span>
-                      </span>
+                        <span className="material-symbols-outlined text-[18px]">
+                          {copied === `existing_key_${key.id}` ? "check" : "content_copy"}
+                        </span>
+                      </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => setOpenKeyActionsId(actionsOpen ? null : key.id)}
+                      aria-expanded={actionsOpen}
+                      aria-label={tr("moreActions", "More actions")}
+                      data-testid={`key-more-${key.id}`}
+                      className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-surface-2 hover:text-primary-text"
+                    >
+                      <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+                        more_horiz
+                      </span>
+                    </button>
                   </div>
-                  <div className="col-span-2 flex items-center">
-                    <div className="flex flex-col items-start gap-1">
-                      {/* QUOTA differentiation chips — prepended before existing badges */}
-                      {keyIsQuota && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
-                          {t("quotaModeOnly")}
-                        </span>
-                      )}
-                      {keyIsQuota &&
-                        visibleGroups.map((groupName) => (
-                          <span
-                            key={groupName}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium truncate max-w-full"
+                  {actionsOpen && (
+                    <div className="flex flex-col gap-3 pb-2 pt-1">
+                      <div className="flex flex-wrap gap-1">{badges}</div>
+                      <p className="text-xs text-text-muted">
+                        {stats?.totalRequests ?? 0} {t("reqs")}
+                        {(stats?.totalRequests ?? 0) > 0
+                          ? ` · ${formatUsdCost(stats?.totalCost ?? 0, locale)}`
+                          : ""}
+                        {" · "}
+                        {stats?.lastUsed
+                          ? t("lastUsedOn", { date: new Date(stats.lastUsed).toLocaleDateString() })
+                          : t("neverUsed")}
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {allowKeyReveal && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleKeyVisibility(key.id)}
+                            className="inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
                           >
-                            {groupName}
-                          </span>
-                        ))}
-                      {keyIsQuota && extraGroupCount > 0 && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
-                          +{extraGroupCount}
-                        </span>
-                      )}
-                      {/* Existing badges */}
-                      {isRestricted ? (
+                            <span className="material-symbols-outlined text-[18px]">
+                              {revealed ? "visibility_off" : "visibility"}
+                            </span>
+                            {revealed ? t("hideKey") : t("showKey")}
+                          </button>
+                        )}
+                        <a
+                          href={`/dashboard/costs?range=all&apiKeyIds=${encodeURIComponent(key.id)}&groupBy=model`}
+                          className="inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">payments</span>
+                          <span className="min-w-0 break-words text-left leading-tight">{`View costs for ${key.name}`}</span>
+                        </a>
                         <button
+                          type="button"
+                          onClick={() => handleRegenerateKey(key.id)}
+                          className="inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">refresh</span>
+                          <span className="min-w-0 break-words text-left leading-tight">
+                            {t("regenerateKey")}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => handleOpenPermissions(key)}
-                          className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-warning/10 text-warning text-xs font-medium hover:bg-warning/20 transition-colors"
+                          className="inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">tune</span>
+                          <span className="min-w-0 break-words text-left leading-tight">
+                            {t("editPermissions")}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteKey(key.id)}
+                          className="inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-error hover:bg-error/10"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">delete</span>
+                          <span className="min-w-0 break-words text-left leading-tight">
+                            {t("deleteKey")}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+              return (
+                <div key={key.id}>
+                  {compactRow}
+                  <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-3 border-b border-border last:border-b-0 hover:bg-surface-2 transition-colors group md:min-w-[760px]">
+                    <div className="col-span-2 flex items-center gap-2">
+                      <span
+                        className={`material-symbols-outlined text-sm ${isRestricted ? "text-warning" : "text-success"}`}
+                      >
+                        {isRestricted ? "lock" : "lock_open"}
+                      </span>
+                      <span className="text-sm font-medium truncate" title={key.name}>
+                        {key.name}
+                      </span>
+                    </div>
+                    <div className="col-span-3 flex items-center gap-1.5">
+                      <code className="text-sm text-text-muted font-mono truncate">
+                        {visibleKeys.has(key.id) ? (revealedKeys.get(key.id) ?? key.key) : key.key}
+                      </code>
+                      {allowKeyReveal ? (
+                        <>
+                          <button
+                            onClick={() => handleToggleKeyVisibility(key.id)}
+                            className="p-1 text-text-muted hover:text-primary-text transition-colors shrink-0"
+                            title={visibleKeys.has(key.id) ? t("hideKey") : t("showKey")}
+                            aria-label={visibleKeys.has(key.id) ? t("hideKey") : t("showKey")}
+                            aria-pressed={visibleKeys.has(key.id)}
+                          >
+                            <span className="material-symbols-outlined text-[14px]">
+                              {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
+                            </span>
+                          </button>
+                          <button
+                            onClick={() => handleCopyExistingKey(key.id)}
+                            className="p-1 text-text-muted hover:text-primary-text transition-colors shrink-0"
+                            title={tc("copy")}
+                            aria-label={tc("copy")}
+                          >
+                            <span className="material-symbols-outlined text-[14px]">
+                              {copied === `existing_key_${key.id}` ? "check" : "content_copy"}
+                            </span>
+                          </button>
+                        </>
+                      ) : (
+                        <span
+                          className="p-1 text-text-muted opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all shrink-0 cursor-help"
+                          title={t("keyOnlyAvailableAtCreation")}
                         >
                           <span className="material-symbols-outlined text-[14px]">lock</span>
-                          {t("modelsCount", { count: key.allowedModels!.length })}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleOpenPermissions(key)}
-                          className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-success/10 text-success text-xs font-medium hover:bg-success/20 transition-colors"
-                        >
-                          <span className="material-symbols-outlined text-[14px]">lock_open</span>
-                          {t("allModels")}
-                        </button>
-                      )}
-                      {hasConnectionRestrictions && (
-                        <button
-                          onClick={() => handleOpenPermissions(key)}
-                          className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 text-primary-text text-xs font-medium hover:bg-primary/20 transition-colors"
-                        >
-                          <span className="material-symbols-outlined text-[14px]">cable</span>
-                          {key.allowedConnections!.length} conn
-                        </button>
-                      )}
-                      {hasComboRestrictions && (
-                        <button
-                          onClick={() => handleOpenPermissions(key)}
-                          className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 text-primary-text text-xs font-medium hover:bg-primary/20 transition-colors"
-                        >
-                          <span className="material-symbols-outlined text-[14px]">hub</span>
-                          {key.allowedCombos!.length} combos
-                        </button>
-                      )}
-                      {noLogEnabled && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">
-                            visibility_off
-                          </span>
-                          No-Log
-                        </span>
-                      )}
-                      {key.autoResolve && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">
-                            auto_fix_high
-                          </span>
-                          Auto-Resolve
-                        </span>
-                      )}
-                      {hasJsonStreamDefault && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">data_object</span>
-                          {t("streamDefaultBadge")}
-                        </span>
-                      )}
-                      {hasLocalUsageCommand && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-2 text-text-muted text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">terminal</span>
-                          {t("localUsageCommandBadge")}
-                        </span>
-                      )}
-                      {key.usageLimitEnabled === true && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-success/10 text-success text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">paid</span>
-                          USD quota
-                        </span>
-                      )}
-                      {hasProviderQuotaBypass && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-warning/10 text-warning text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">alt_route</span>
-                          Bypass quota policy
-                        </span>
-                      )}
-                      {hasSessionLimit && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">group</span>
-                          Sessions: {activeSessions}/{maxSessions}
-                        </span>
-                      )}
-                      {deviceCount > 0 && (
-                        <span
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary-text text-[11px] font-medium"
-                          title={t("devicesTooltip", { count: deviceCount })}
-                        >
-                          <span className="material-symbols-outlined text-[12px]">devices</span>
-                          {t("devicesCount", { count: deviceCount })}
-                        </span>
-                      )}
-                      {hasThrottle && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-warning/10 text-warning text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">speed</span>+
-                          {throttleDelayMs}ms
-                        </span>
-                      )}
-                      {hasManageScope && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-error/10 text-error text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">
-                            admin_panel_settings
-                          </span>
-                          manage
-                        </span>
-                      )}
-                      {!keyIsActive && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-error/10 text-error text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">block</span>
-                          {t("disabled")}
-                        </span>
-                      )}
-                      {hasSchedule && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-warning/10 text-warning text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">schedule</span>
-                          {t("scheduleActive")}
-                        </span>
-                      )}
-                      {key.isBanned && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-error/10 text-error text-[11px] font-bold animate-pulse">
-                          <span className="material-symbols-outlined text-[12px]">gavel</span>
-                          BANNED
-                        </span>
-                      )}
-                      {key.expiresAt && new Date(key.expiresAt).getTime() < Date.now() && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-2 text-text-muted text-[11px] font-medium">
-                          <span className="material-symbols-outlined text-[12px]">event_busy</span>
-                          EXPIRED
                         </span>
                       )}
                     </div>
-                  </div>
-                  <div className="col-span-2 flex flex-col justify-center">
-                    <span className="text-sm font-medium tabular-nums">
-                      {stats?.totalRequests ?? 0}{" "}
-                      <span className="text-text-muted font-normal text-xs">{t("reqs")}</span>
-                    </span>
-                    {(stats?.totalRequests ?? 0) > 0 && (
-                      <span className="text-[10px] text-success tabular-nums">
-                        {formatUsdCost(stats?.totalCost ?? 0, locale)}
+                    <div className="col-span-2 flex items-center">{badges}</div>
+                    <div className="col-span-2 flex flex-col justify-center">
+                      <span className="text-sm font-medium tabular-nums">
+                        {stats?.totalRequests ?? 0}{" "}
+                        <span className="text-text-muted font-normal text-xs">{t("reqs")}</span>
                       </span>
-                    )}
-                    {stats?.lastUsed ? (
-                      <span className="text-[10px] text-text-muted">
-                        {t("lastUsedOn", { date: new Date(stats.lastUsed).toLocaleDateString() })}
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-text-muted italic">{t("neverUsed")}</span>
-                    )}
-                  </div>
-                  <div className="col-span-1 flex items-center text-sm text-text-muted">
-                    {new Date(key.createdAt).toLocaleDateString()}
-                  </div>
-                  <div className="col-span-2 flex items-center justify-end gap-1">
-                    <a
-                      href={`/dashboard/costs?range=all&apiKeyIds=${encodeURIComponent(key.id)}&groupBy=model`}
-                      className="p-2 hover:bg-success/10 rounded text-text-muted hover:text-success opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                      title={`View costs for ${key.name}`}
-                      aria-label={`View costs for ${key.name}`}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">payments</span>
-                    </a>
-                    <button
-                      onClick={() => handleRegenerateKey(key.id)}
-                      className="p-2 hover:bg-warning/10 rounded text-text-muted hover:text-warning opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                      title={t("regenerateKey")}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">refresh</span>
-                    </button>
-                    <button
-                      onClick={() => handleOpenPermissions(key)}
-                      className="p-2 hover:bg-primary/10 rounded text-text-muted hover:text-primary-text opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                      title={t("editPermissions")}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">tune</span>
-                    </button>
-                    <button
-                      onClick={() => handleDeleteKey(key.id)}
-                      className="p-2 hover:bg-error/10 rounded text-error opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                      title={t("deleteKey")}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">delete</span>
-                    </button>
+                      {(stats?.totalRequests ?? 0) > 0 && (
+                        <span className="text-[10px] text-success tabular-nums">
+                          {formatUsdCost(stats?.totalCost ?? 0, locale)}
+                        </span>
+                      )}
+                      {stats?.lastUsed ? (
+                        <span className="text-[10px] text-text-muted">
+                          {t("lastUsedOn", { date: new Date(stats.lastUsed).toLocaleDateString() })}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-text-muted italic">{t("neverUsed")}</span>
+                      )}
+                    </div>
+                    <div className="col-span-1 flex items-center text-sm text-text-muted">
+                      {new Date(key.createdAt).toLocaleDateString()}
+                    </div>
+                    <div className="col-span-2 flex items-center justify-end gap-1">
+                      <a
+                        href={`/dashboard/costs?range=all&apiKeyIds=${encodeURIComponent(key.id)}&groupBy=model`}
+                        className="p-2 hover:bg-success/10 rounded text-text-muted hover:text-success opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                        title={`View costs for ${key.name}`}
+                        aria-label={`View costs for ${key.name}`}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">payments</span>
+                      </a>
+                      <button
+                        onClick={() => handleRegenerateKey(key.id)}
+                        className="p-2 hover:bg-warning/10 rounded text-text-muted hover:text-warning opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                        title={t("regenerateKey")}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">refresh</span>
+                      </button>
+                      <button
+                        onClick={() => handleOpenPermissions(key)}
+                        className="p-2 hover:bg-primary/10 rounded text-text-muted hover:text-primary-text opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                        title={t("editPermissions")}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">tune</span>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteKey(key.id)}
+                        className="p-2 hover:bg-error/10 rounded text-error opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                        title={t("deleteKey")}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">delete</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
             };
 
             const tableHeader = (
-              <div className="grid grid-cols-12 gap-4 px-4 py-2.5 bg-transparent border-b border-border text-xs font-medium text-text-muted min-w-[760px]">
+              <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-2.5 bg-transparent border-b border-border text-xs font-medium text-text-muted md:min-w-[760px]">
                 <div className="col-span-2">{t("name")}</div>
                 <div className="col-span-3">{t("key")}</div>
                 <div className="col-span-2">{t("permissions")}</div>
@@ -1358,17 +1465,19 @@ export default function ApiManagerPageClient() {
                 {normalKeys.length > 0 && (
                   <div>
                     {/* Normal keys section heading */}
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="material-symbols-outlined text-base text-text-muted">
-                        vpn_key
-                      </span>
-                      <span className="text-sm font-medium text-text-main">
-                        {t("normalKeysSection")}
-                      </span>
-                      <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-surface/80 border border-border text-[11px] font-semibold text-text-muted">
-                        {normalKeys.length}
-                      </span>
-                    </div>
+                    {quotaKeys.length > 0 && (
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="material-symbols-outlined text-base text-text-muted">
+                          vpn_key
+                        </span>
+                        <span className="text-sm font-medium text-text-main">
+                          {t("normalKeysSection")}
+                        </span>
+                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-surface/80 border border-border text-[11px] font-semibold text-text-muted">
+                          {normalKeys.length}
+                        </span>
+                      </div>
+                    )}
                     <div className="border border-border rounded-lg overflow-hidden">
                       <div className="overflow-x-auto">
                         {tableHeader}

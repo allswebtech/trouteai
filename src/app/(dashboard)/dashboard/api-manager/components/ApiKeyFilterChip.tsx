@@ -21,7 +21,7 @@ export default function ApiKeyFilterChip({
     <button
       onClick={onClick}
       className={cn(
-        "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+        "flex min-h-11 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors md:min-h-0",
         isActive
           ? "bg-primary text-on-primary border-primary"
           : "bg-bg-subtle border-border text-text-muted hover:text-text-primary-text hover:border-primary/30"

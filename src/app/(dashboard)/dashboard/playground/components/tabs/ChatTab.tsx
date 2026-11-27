@@ -404,7 +404,7 @@ export default function ChatTab({ configState, onMetricsUpdate }: ChatTabProps) 
         {loading ? (
           <button
             onClick={handleCancel}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm text-text-muted hover:text-text-main hover:bg-black/5 transition-colors shrink-0"
+            className="flex min-h-11 items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm text-text-muted hover:text-text-main hover:bg-black/5 transition-colors shrink-0"
           >
             <span className="material-symbols-outlined text-[16px]">stop</span>
             {t("stop")}
@@ -413,7 +413,7 @@ export default function ChatTab({ configState, onMetricsUpdate }: ChatTabProps) 
           <button
             onClick={() => void handleSend()}
             disabled={!input.trim()}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors shrink-0"
+            className="flex min-h-11 items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors shrink-0"
           >
             <span className="material-symbols-outlined text-[16px]">send</span>
             {t("send")}
