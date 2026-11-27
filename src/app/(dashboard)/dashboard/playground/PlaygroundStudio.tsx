@@ -5,6 +5,7 @@
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import type { StreamMetrics } from "@/shared/schemas/playground";
 import StudioTopBar, { type StudioTab } from "./components/StudioTopBar";
 import StudioConfigPane, { type ConfigState } from "./components/StudioConfigPane";
@@ -60,6 +61,9 @@ export function PlaygroundStudio() {
 
   const [configState, setConfigState] = useState<ConfigState>(INITIAL_CONFIG);
   const [metrics, setMetrics] = useState<StreamMetrics>(INITIAL_METRICS);
+  // Phone: the other tabs and the config sit in one sheet behind one press.
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const tp = useTranslations("playground");
 
   function handleTabChange(tab: StudioTab) {
     setManualTab(tab);
@@ -76,6 +80,7 @@ export function PlaygroundStudio() {
         activeTab={effectiveTab}
         onTabChange={handleTabChange}
         metrics={metrics}
+        onOpenSheet={() => setSheetOpen(true)}
         exportState={{
           endpoint: configState.endpoint,
           baseUrl: configState.baseUrl,
@@ -99,7 +104,42 @@ export function PlaygroundStudio() {
 
         {/* Config pane — always visible, collapsible */}
         {/* SLOT_PRESETS and SLOT_IMPROVE are inside StudioConfigPane */}
-        <StudioConfigPane configState={configState} setConfigState={setConfigState} />
+        <StudioConfigPane
+          configState={configState}
+          setConfigState={setConfigState}
+          mobileOpen={sheetOpen}
+          onMobileClose={() => setSheetOpen(false)}
+          mobileExtra={
+            <div className="md:hidden grid grid-cols-2 gap-2" role="tablist">
+              {(
+                [
+                  ["chat", "tabChat"],
+                  ["compare", "tabCompare"],
+                  ["api", "tabApi"],
+                  ["build", "tabBuild"],
+                ] as const
+              ).map(([id, labelKey]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={effectiveTab === id}
+                  onClick={() => {
+                    handleTabChange(id);
+                    setSheetOpen(false);
+                  }}
+                  className={`min-h-11 rounded-control border px-3 text-sm font-medium ${
+                    effectiveTab === id
+                      ? "border-primary bg-primary/10 text-primary-text"
+                      : "border-border text-text-main"
+                  }`}
+                >
+                  {tp(labelKey)}
+                </button>
+              ))}
+            </div>
+          }
+        />
       </div>
     </div>
   );
