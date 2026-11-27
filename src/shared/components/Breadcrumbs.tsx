@@ -5,7 +5,6 @@
  * one crumb, its parent's name, then its own NAME (a provider, a combo), never an id.
  */
 
-import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
@@ -40,25 +39,6 @@ export default function Breadcrumbs() {
   const ts = useTranslations("sidebar");
   const te = useTranslations("easy");
   const hit = pathname ? findPage(pathname) : null;
-  const comboId = hit?.item.id === "combos" && hit.rest.length === 1 ? hit.rest[0] : null;
-  const [comboName, setComboName] = useState<{ id: string; name: string } | null>(null);
-
-  useEffect(() => {
-    if (!comboId || comboId === "playground" || comboId === "live") return;
-    let alive = true;
-    fetch(`/api/combos/${encodeURIComponent(comboId)}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((combo) => {
-        if (alive && combo && typeof combo.name === "string") {
-          setComboName({ id: comboId, name: combo.name });
-        }
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [comboId]);
-
   if (!hit) return null;
   const { item, rest } = hit;
   const label = (page: SidebarItemDefinition) => ts(page.i18nKey);
@@ -80,8 +60,9 @@ export default function Breadcrumbs() {
         name = info?.name ?? null;
       }
     } else if (item.id === "combos") {
+      // A combo's own page draws its crumb with the name.
       if (seg === "playground") name = te("tryRoute");
-      else if (comboName?.id === seg) name = comboName.name;
+      else if (seg !== "live") return null;
     }
   }
   if (!parent) return null;

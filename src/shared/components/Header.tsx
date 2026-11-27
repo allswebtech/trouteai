@@ -107,6 +107,7 @@ type PageInfo = {
 function usePageInfo(pathname: string | null): PageInfo {
   const ts = useTranslations("sidebar");
   const th = useTranslations("header");
+  const te = useTranslations("easy");
 
   if (!pathname) return { title: "", description: "" };
 
@@ -122,6 +123,10 @@ function usePageInfo(pathname: string | null): PageInfo {
       return { title: th("openaiCompatible"), description: "", providerId: "oai-cc" };
     if (pid.startsWith(ANTHROPIC_COMPATIBLE_PREFIX))
       return { title: th("anthropicCompatible"), description: "", providerId: "anthropic-m" };
+  }
+
+  if (pathname.startsWith("/dashboard/media-providers")) {
+    return { title: te("accountMedia"), description: "" };
   }
 
   // Derive from sidebar
