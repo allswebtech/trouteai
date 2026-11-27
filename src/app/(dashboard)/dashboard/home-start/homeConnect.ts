@@ -4,28 +4,19 @@ import { isProviderConnectionErrored } from "@/shared/utils/providerConnectionSt
 /** Name of the key that Make a key creates on Home. */
 export const CODING_TOOL_KEY_NAME = "Coding tool";
 
-type ModelLike = { provider?: string; fullModel?: string };
-
 /**
- * The model name to copy: the first visible combo's name, else provider/model of the first
- * model of the first account that has one. Null when there is nothing to copy yet.
- * `aliases` maps a provider id to the short id its models are listed under.
+ * The model name to copy: the first visible combo's name, else the first provider/model the
+ * gateway lists that is not a combo (the list is what GET /v1/models serves now, so it holds
+ * only names that work). Null when there is nothing to copy yet.
  */
 export function pickHomeModel(
   comboName: string | null,
-  connections: Array<{ provider?: string }>,
-  models: ModelLike[],
-  aliases: Record<string, string | undefined>
+  listedIds: string[],
+  comboNames: string[]
 ): string | null {
   if (comboName) return comboName;
-  for (const connection of connections) {
-    const id = connection.provider;
-    if (!id) continue;
-    const keys = new Set([id, aliases[id]].filter(Boolean));
-    const model = models.find((m) => m.provider && keys.has(m.provider) && m.fullModel);
-    if (model?.fullModel) return model.fullModel;
-  }
-  return null;
+  const combos = new Set(comboNames);
+  return listedIds.find((id) => id.includes("/") && !combos.has(id)) ?? null;
 }
 
 /** How many accounts are failing (switched-off accounts do not count). */

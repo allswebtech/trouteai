@@ -15,28 +15,14 @@ function check(name: string, ok: boolean, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
 }
 
-const models = [
-  { provider: "oa", model: "gpt-x", fullModel: "oa/gpt-x" },
-  { provider: "cc", model: "sonnet-y", fullModel: "cc/sonnet-y" },
-  { provider: "cc", model: "haiku-y", fullModel: "cc/haiku-y" },
-];
-check("a combo name wins", pickHomeModel("best", [{ provider: "claude" }], models, {}) === "best");
+const listed = ["best", "auto/free", "oa/gpt-x", "cc/sonnet-y"];
+check("a combo name wins", pickHomeModel("best", listed, ["best", "auto/free"]) === "best");
 check(
-  "without a combo: the first model of the first account",
-  pickHomeModel(null, [{ provider: "claude" }, { provider: "openai" }], models, {
-    claude: "cc",
-    openai: "oa",
-  }) === "cc/sonnet-y"
+  "without a combo: the first provider/model that is not a combo",
+  pickHomeModel(null, listed, ["best", "auto/free"]) === "oa/gpt-x"
 );
-check(
-  "an account whose provider id is the model's provider",
-  pickHomeModel(null, [{ provider: "oa" }], models, {}) === "oa/gpt-x"
-);
-check("no account and no combo: nothing to copy", pickHomeModel(null, [], models, {}) === null);
-check(
-  "an account with no model is skipped for the next one",
-  pickHomeModel(null, [{ provider: "none" }, { provider: "oa" }], models, {}) === "oa/gpt-x"
-);
+check("a bare name is not a provider/model", pickHomeModel(null, ["best"], []) === null);
+check("nothing listed: nothing to copy", pickHomeModel(null, [], []) === null);
 
 check(
   "needs attention counts only failing accounts",

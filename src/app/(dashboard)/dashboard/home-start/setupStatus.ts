@@ -6,9 +6,17 @@ export type HomeSetupStatus = {
   keyCount: number;
   /** Name of the first combo (prefers a visible one), used in the curl example. */
   comboName: string | null;
+  /** Names of every combo, so a combo is never taken for an account's model. */
+  comboNames: string[];
+  /** Ids the gateway lists at /v1/models (what can be served now). */
+  listedIds: string[];
 };
 
-export const EMPTY_SETUP_STATUS: HomeSetupStatus = { comboCount: 0, keyCount: 0, comboName: null };
+export const EMPTY_SETUP_STATUS: HomeSetupStatus = { comboCount: 0, keyCount: 0,
+  comboName: null,
+  comboNames: [],
+  listedIds: [],
+};
 
 type JsonRecord = Record<string, unknown>;
 
@@ -28,10 +36,14 @@ function countFrom(total: unknown, fallback: number): number {
 
 /** Loads combo and API key counts. Never throws: a failed request counts as 0. */
 export async function fetchHomeSetupStatus(): Promise<HomeSetupStatus> {
-  const [combosData, keysData] = await Promise.all([
+  const [combosData, keysData, listData] = await Promise.all([
     fetch("/api/combos?limit=50").then(readJson, () => null),
     fetch("/api/keys?limit=1").then(readJson, () => null),
+    fetch("/v1/models").then(readJson, () => null),
   ]);
+  const listedIds = (Array.isArray(listData?.data) ? (listData.data as JsonRecord[]) : [])
+    .map((m) => m?.id)
+    .filter((id): id is string => typeof id === "string");
 
   const combos = Array.isArray(combosData?.combos) ? (combosData.combos as JsonRecord[]) : [];
   const keys = Array.isArray(keysData?.keys) ? keysData.keys : [];
@@ -42,5 +54,7 @@ export async function fetchHomeSetupStatus(): Promise<HomeSetupStatus> {
     comboCount: countFrom(combosData?.total, combos.length),
     keyCount: countFrom(keysData?.total, keys.length),
     comboName: firstCombo ? (firstCombo.name as string) : null,
+    comboNames: named.map((combo) => combo.name as string),
+    listedIds,
   };
 }

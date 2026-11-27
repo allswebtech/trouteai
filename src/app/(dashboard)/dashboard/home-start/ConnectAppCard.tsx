@@ -87,24 +87,24 @@ export function ConnectAppCard({
     <Card>
       <div className="flex flex-col gap-4">
         <h2 className="text-base font-semibold text-text-main">
-          {tr("connectAppTitle", "Connect a coding tool")}
+          {tr("toolTitle", "Connect a coding tool")}
         </h2>
 
         <dl className="flex flex-col gap-4">
-          <ConnectRow label={tr("connectAppBaseUrlLabel", "Address")}>
+          <ConnectRow label={tr("toolAddress", "Address")}>
             <div className="flex items-center gap-2">
               <code className={CODE_BOX} title={apiBaseUrl}>
                 {apiBaseUrl}
               </code>
-              {renderCopyButton("base-url", apiBaseUrl, tr("connectAppCopyBaseUrl", "Copy address"))}
+              {renderCopyButton("base-url", apiBaseUrl, tr("toolCopyAddress", "Copy address"))}
             </div>
           </ConnectRow>
 
-          <ConnectRow label={tr("connectAppApiKeyLabel", "Key")}>
+          <ConnectRow label={tr("toolKey", "Key")}>
             {madeKey ? (
               <div className="flex items-center gap-2">
                 <code className={CODE_BOX}>{madeKey}</code>
-                {renderCopyButton("key", madeKey, tr("connectAppCopyKey", "Copy key"))}
+                {renderCopyButton("key", madeKey, tr("toolCopyKey", "Copy key"))}
               </div>
             ) : keyCount > 0 ? (
               <Link
@@ -112,7 +112,7 @@ export function ConnectAppCard({
                 prefetch={false}
                 className={`${INLINE_LINK} inline-flex min-h-11 items-center`}
               >
-                {tr("connectAppUseKey", "Use a key from Keys")}
+                {tr("toolUseKey", "Use a key from Keys")}
               </Link>
             ) : (
               <div className="flex flex-col items-start gap-1">
@@ -123,11 +123,11 @@ export function ConnectAppCard({
                   disabled={making}
                   className="min-h-11"
                 >
-                  {tr("connectAppMakeKey", "Make a key")}
+                  {tr("toolMakeKey", "Make a key")}
                 </Button>
                 {keyError && (
                   <p role="alert" className="text-sm text-error">
-                    {tr("connectAppKeyFailed", "Could not make a key.")}
+                    {tr("toolKeyFailed", "Could not make a key.")}
                   </p>
                 )}
               </div>
@@ -135,12 +135,12 @@ export function ConnectAppCard({
           </ConnectRow>
 
           {model && (
-            <ConnectRow label={tr("connectAppModelLabel", "Model")}>
+            <ConnectRow label={tr("toolModel", "Model")}>
               <div className="flex items-center gap-2">
                 <code className={CODE_BOX} title={model}>
                   {model}
                 </code>
-                {renderCopyButton("model", model, tr("connectAppCopyModel", "Copy model"))}
+                {renderCopyButton("model", model, tr("toolCopyModel", "Copy model"))}
               </div>
             </ConnectRow>
           )}
@@ -151,12 +151,12 @@ export function ConnectAppCard({
           prefetch={false}
           className={`${INLINE_LINK} inline-flex min-h-11 items-center`}
         >
-          {tr("connectAppSteps", "Steps for each app")}
+          {tr("toolSteps", "Steps for each app")}
         </Link>
 
         <details className="group border-t border-border pt-3">
           <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between text-sm font-medium text-text-main">
-            {tr("connectAppTerminal", "Try it in a terminal")}
+            {tr("toolTerminal", "Try it in a terminal")}
             <span
               className="material-symbols-outlined text-[20px] text-text-muted transition-transform group-open:rotate-180"
               aria-hidden="true"

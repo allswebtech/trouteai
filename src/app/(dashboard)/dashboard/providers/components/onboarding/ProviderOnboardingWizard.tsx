@@ -737,7 +737,11 @@ export default function ProviderOnboardingWizard() {
             {text("onboardingAddProviderTitle", "Add a provider")}
           </h1>
         </div>
-        <Button variant="ghost" onClick={() => router.push("/dashboard/providers")}>
+        <Button
+          variant="ghost"
+          onClick={() => router.push("/dashboard/providers")}
+          className="hidden md:inline-flex"
+        >
           {text("close", "Close")}
         </Button>
       </div>

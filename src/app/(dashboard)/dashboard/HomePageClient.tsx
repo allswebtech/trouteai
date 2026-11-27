@@ -433,10 +433,11 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
     );
   }
 
-  const aliases: Record<string, string | undefined> = Object.fromEntries(
-    Object.entries(AI_PROVIDERS).map(([id, info]) => [id, info.alias])
+  const model = pickHomeModel(
+    setupStatus.comboName,
+    setupStatus.listedIds,
+    setupStatus.comboNames
   );
-  const model = pickHomeModel(setupStatus.comboName, providerConnections, models, aliases);
   const needsAttention = countNeedsAttention(providerConnections);
 
   return (
