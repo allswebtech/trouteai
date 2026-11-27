@@ -37,6 +37,9 @@ for (const key of ["HOST", "PORT", "DASHBOARD_PORT", "API_PORT", "TROUTEAI_UPDAT
 Object.assign(env, {
   DATA_DIR: DATA,
   INITIAL_PASSWORD: PASSWORD,
+  // The default address of the environment file that a build leaves in this folder, set here for
+  // the test itself so the file cannot decide: the one-time link must still name the listening port.
+  TROUTEAI_PUBLIC_BASE_URL: "http://localhost:20017",
   // Short intervals so the keep-alive checks take seconds, not minutes.
   SSE_HEARTBEAT_INTERVAL_MS: "1000",
   TROUTEAI_STREAM_KEEPALIVE_AFTER_MS: "1000",
