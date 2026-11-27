@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { cn } from "@/shared/utils/cn";
@@ -54,9 +55,9 @@ export interface UsageMoreRow {
  * The closed More fold at the end of a page: one row per page that used to be a menu item.
  * Shown only when there are rows.
  */
-export function UsageMore({ rows }: { rows: UsageMoreRow[] }) {
+export function UsageMore({ rows, children }: { rows: UsageMoreRow[]; children?: ReactNode }) {
   const t = useTranslations("usageTabs");
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && !children) return null;
   return (
     <details className="group rounded-card border border-border bg-surface">
       <summary className="focus-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-4 text-sm font-medium text-text-main [&::-webkit-details-marker]:hidden">
@@ -84,6 +85,7 @@ export function UsageMore({ rows }: { rows: UsageMoreRow[] }) {
             </span>
           </Link>
         ))}
+        {children}
       </div>
     </details>
   );
@@ -118,6 +120,12 @@ function useMoreRows(tab: UsageTabId | "activity"): UsageMoreRow[] {
 }
 
 /** The More fold of each Usage page (and of Activity), written once. */
-export function UsageMoreFor({ tab }: { tab: UsageTabId | "activity" }) {
-  return <UsageMore rows={useMoreRows(tab)} />;
+export function UsageMoreFor({
+  tab,
+  children,
+}: {
+  tab: UsageTabId | "activity";
+  children?: ReactNode;
+}) {
+  return <UsageMore rows={useMoreRows(tab)}>{children}</UsageMore>;
 }

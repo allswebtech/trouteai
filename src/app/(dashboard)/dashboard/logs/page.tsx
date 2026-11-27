@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useRef, useEffect, Suspense } from "react";
+import { useState, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { ConfirmModal, RequestLoggerV2 } from "@/shared/components";
+import UsageTabs, { UsageMoreFor } from "@/shared/components/UsageTabs";
 import { useTranslations } from "next-intl";
 
 const TIME_RANGES = [
@@ -40,19 +41,8 @@ function LogsPageContent() {
   const [cleaningHistory, setCleaningHistory] = useState(false);
   const [cleanHistoryStatus, setCleanHistoryStatus] = useState<string | null>(null);
   const [requestLogKey, setRequestLogKey] = useState(0);
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const requestLoggerRef = useRef<any>(null);
   const t = useTranslations("logs") as LogsTranslator;
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setShowExport(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
   async function handleExport(hours: number) {
     setExporting(true);
@@ -123,80 +113,7 @@ function LogsPageContent() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex-shrink-0 flex items-center justify-between gap-4 flex-wrap">
-        <h2 className="text-xl font-semibold tracking-tight text-text-main">{t("requestLogs")}</h2>
-
-        <div className="flex items-center gap-2">
-          <button
-            id="clean-log-history-btn"
-            onClick={() => setShowCleanHistory(true)}
-            disabled={cleaningHistory}
-            className="inline-flex items-center gap-2 h-8 px-3 text-sm font-medium rounded-control border border-error/30 bg-surface text-error hover:bg-error/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error/30 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              <path
-                d="M6 2h4m-5 2h6m-7 0h8m-1 0-.5 9a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1L5 4m2 3v4m2-4v4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            {logsText(t, "cleanHistoryButton", "Clean history")}
-          </button>
-
-          <div className="relative" ref={dropdownRef}>
-            <button
-              id="export-logs-btn"
-              onClick={() => setShowExport(!showExport)}
-              disabled={exporting}
-              className="inline-flex items-center gap-2 h-8 px-3 text-sm font-medium rounded-control bg-surface border border-border text-text-main hover:bg-surface-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              >
-                <path
-                  d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              {exporting ? t("exporting") : t("export")}
-            </button>
-
-            {showExport && (
-              <div className="absolute right-0 top-full mt-1 z-50 min-w-[160px] rounded-control bg-surface border border-border p-1 shadow-elevated overflow-hidden animate-in fade-in">
-                <div className="px-2 py-1.5 text-xs text-text-muted font-medium">
-                  {t("timeRange")}
-                </div>
-                {TIME_RANGES.map((range) => (
-                  <button
-                    key={range.hours}
-                    id={`export-${range.hours}h-btn`}
-                    onClick={() => handleExport(range.hours)}
-                    className="w-full h-8 px-2 rounded-md text-sm text-left hover:bg-surface-2 text-text-main transition-colors flex items-center justify-between gap-3"
-                  >
-                    <span>{t("lastNHours", { hours: range.label })}</span>
-                    <span className="text-xs text-text-muted">
-                      {range.hours === 24 ? t("defaultRange") : ""}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      <UsageTabs active="requests" />
 
       {cleanHistoryStatus && (
         <div className="flex-shrink-0 rounded-card border border-border bg-surface px-4 py-3 text-sm text-text-muted">
@@ -207,6 +124,46 @@ function LogsPageContent() {
       <div className="min-h-0">
         <RequestLoggerV2 key={requestLogKey} ref={requestLoggerRef} initialSelectedId={initialId} />
       </div>
+
+      <UsageMoreFor tab="requests">
+        <button
+          id="export-logs-btn"
+          type="button"
+          onClick={() => setShowExport(!showExport)}
+          disabled={exporting}
+          aria-expanded={showExport}
+          className="focus-ring flex min-h-11 items-center justify-between gap-2 px-4 text-start text-sm text-text-main hover:bg-surface-2 disabled:opacity-50"
+        >
+          {exporting ? t("exporting") : t("export")}
+        </button>
+        {showExport && (
+          <div className="flex flex-col border-t border-border/50 bg-surface-2/40">
+            {TIME_RANGES.map((range) => (
+              <button
+                key={range.hours}
+                id={`export-${range.hours}h-btn`}
+                type="button"
+                onClick={() => handleExport(range.hours)}
+                className="focus-ring flex min-h-11 items-center justify-between gap-3 px-6 text-start text-sm text-text-main hover:bg-surface-2"
+              >
+                <span>{t("lastNHours", { hours: range.label })}</span>
+                <span className="text-xs text-text-muted">
+                  {range.hours === 24 ? t("defaultRange") : ""}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        <button
+          id="clean-log-history-btn"
+          type="button"
+          onClick={() => setShowCleanHistory(true)}
+          disabled={cleaningHistory}
+          className="focus-ring flex min-h-11 items-center px-4 text-start text-sm text-error hover:bg-error/10 disabled:opacity-50"
+        >
+          {logsText(t, "cleanHistoryButton", "Clean history")}
+        </button>
+      </UsageMoreFor>
 
       <ConfirmModal
         isOpen={showCleanHistory}

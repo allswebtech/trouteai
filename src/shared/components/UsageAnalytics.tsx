@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import Card from "./Card";
 import { CardSkeleton } from "./Loading";
@@ -30,10 +30,11 @@ import {
 // Main Component
 // ============================================================================
 
-export default function UsageAnalytics() {
+export default function UsageAnalytics({ moreCharts }: { moreCharts?: ReactNode } = {}) {
   const locale = useLocale();
   const t = useTranslations("analytics");
   const tCommon = useTranslations("common");
+  const tu = useTranslations("usageTabs");
   const [range, setRange] = useState("30d");
   const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -195,25 +196,31 @@ export default function UsageAnalytics() {
 
   return (
     <div className="flex flex-col gap-5 min-w-0">
-      {/* Header + Filters */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h2 className="text-xl font-semibold flex items-center gap-2">
-          <span className="material-symbols-outlined text-primary text-[22px]">analytics</span>
-          {t("usageAnalyticsTitle")}
-        </h2>
-        <div className="flex items-center gap-2.5">
-          {/* API Key Filter */}
+      {/* Filters: the key filter only when there is a choice; the range is one select on a phone */}
+      <div className="flex flex-wrap items-center gap-2.5">
+        {availableApiKeys.length > 1 || selectedApiKeys.length > 0 ? (
           <ApiKeyFilterDropdown
             available={availableApiKeys}
             selected={selectedApiKeys}
             onChange={setSelectedApiKeys}
           />
+        ) : null}
 
-          {/* Period Selector + Custom */}
-          <div
-            className="relative flex items-center gap-1 rounded-control border border-border bg-surface-2 p-1"
-            ref={customPickerAnchorRef}
+        <div className="relative min-w-0 flex-1 sm:flex-none" ref={customPickerAnchorRef}>
+          <select
+            aria-label={tu("range")}
+            value={range}
+            onChange={(e) => handleRangeSelect(e.target.value)}
+            className="h-11 w-full rounded-control border border-border bg-surface px-3 text-sm text-text-main focus:border-primary focus:outline-none sm:hidden"
           >
+            {ranges.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+            <option value="custom">{customRangeLabel || t("customRange")}</option>
+          </select>
+          <div className="hidden items-center gap-1 rounded-control border border-border bg-surface-2 p-1 sm:flex">
             {ranges.map((r) => (
               <button
                 key={r.value}
@@ -254,17 +261,17 @@ export default function UsageAnalytics() {
                 </span>
               )}
             </button>
-
-            {/* Custom Range Picker Popover */}
-            {showCustomPicker && (
-              <CustomRangePicker
-                start={customStart}
-                end={customEnd}
-                onApply={handleCustomApply}
-                onClose={() => setShowCustomPicker(false)}
-              />
-            )}
           </div>
+
+          {/* Custom Range Picker Popover */}
+          {showCustomPicker && (
+            <CustomRangePicker
+              start={customStart}
+              end={customEnd}
+              onApply={handleCustomApply}
+              onClose={() => setShowCustomPicker(false)}
+            />
+          )}
         </div>
       </div>
 
@@ -381,6 +388,19 @@ export default function UsageAnalytics() {
         ]}
       />
 
+
+      {/* Charts and the wide tables: closed at first */}
+      <details className="group rounded-card border border-border bg-surface">
+        <summary className="focus-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-4 text-sm font-medium text-text-main [&::-webkit-details-marker]:hidden">
+          {tu("moreCharts")}
+          <span
+            className="material-symbols-outlined text-[20px] text-text-muted transition-transform group-open:rotate-180"
+            aria-hidden="true"
+          >
+            expand_more
+          </span>
+        </summary>
+        <div className="flex min-w-0 flex-col gap-5 border-t border-border p-3">
       {/* Activity Heatmap + Weekly Widgets */}
       <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4 items-stretch">
         <ActivityHeatmap activityMap={analytics?.activityMap} />
@@ -422,6 +442,9 @@ export default function UsageAnalytics() {
 
       {/* Model Breakdown Table */}
       <ModelTable byModel={analytics?.byModel} summary={s} />
+          {moreCharts}
+        </div>
+      </details>
     </div>
   );
 }
