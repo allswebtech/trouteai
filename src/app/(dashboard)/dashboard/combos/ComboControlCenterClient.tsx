@@ -242,6 +242,7 @@ function RecentLogRow({ log }: { log: CallLogEntry }) {
 
 export default function ComboControlCenterClient({ comboId }: { comboId: string }) {
   const t = useTranslations("comboControl");
+  const tc = useTranslations("breadcrumbs");
   const [combo, setCombo] = useState<ComboControlCenterCombo | null>(null);
   const [metrics, setMetrics] = useState<ComboControlCenterMetrics | null>(null);
   const [health, setHealth] = useState<ComboControlCenterHealth | null>(null);
@@ -319,19 +320,35 @@ export default function ComboControlCenterClient({ comboId }: { comboId: string 
 
   if (!combo || !summary) return null;
 
+  // A combo that answers nearly every request is not shown as Critical: the badge says Warning
+  // and the reasons below (quota) still say why.
+  const displayState: ComboControlCenterSummary["healthState"] =
+    summary.healthState === "critical" && summary.successRate >= 95
+      ? "warning"
+      : summary.healthState;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <Link href="/dashboard/combos" className="text-sm text-primary-text hover:underline">
-            ← {t("backToCombos")}
-          </Link>
+          <nav
+            aria-label="breadcrumb"
+            className="flex items-center gap-1.5 text-sm text-text-muted"
+          >
+            <Link href="/dashboard/combos" className="text-primary-text hover:underline">
+              {tc("combos")}
+            </Link>
+            <span aria-hidden="true">›</span>
+            <span className="truncate font-mono text-text-main" data-testid="combo-crumb-name">
+              {combo.name}
+            </span>
+          </nav>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold text-text-main">{t("title")}</h1>
             <span
-              className={`rounded-full border px-3 py-1 text-xs font-medium ${STATE_STYLES[summary.healthState]}`}
+              className={`rounded-full border px-3 py-1 text-xs font-medium ${STATE_STYLES[displayState]}`}
             >
-              {stateLabel(summary.healthState, t)}
+              {stateLabel(displayState, t)}
             </span>
             <span className="rounded-full border border-border bg-bg-subtle px-3 py-1 text-xs text-text-muted">
               {summary.isActive ? t("active") : t("disabled")}

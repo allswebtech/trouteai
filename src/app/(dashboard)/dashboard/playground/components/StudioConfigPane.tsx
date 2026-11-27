@@ -2,7 +2,7 @@
 
 // src/app/(dashboard)/dashboard/playground/components/StudioConfigPane.tsx
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import ParamSliders, { type PlaygroundParams } from "./ParamSliders";
 import type { PlaygroundEndpoint } from "@/lib/playground/codeExport";
@@ -36,6 +36,11 @@ export interface ConfigState {
 interface StudioConfigPaneProps {
   configState: ConfigState;
   setConfigState: (s: ConfigState) => void;
+  /** Phone: the pane is a full-screen sheet, shown only while this is true. */
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+  /** Phone: extra controls at the top of the sheet (the other tabs). */
+  mobileExtra?: ReactNode;
 }
 
 const ENDPOINT_OPTIONS: Array<{ value: PlaygroundEndpoint; labelKey: string }> = [
@@ -60,7 +65,13 @@ const ENDPOINT_OPTIONS: Array<{ value: PlaygroundEndpoint; labelKey: string }> =
  *   - SLOT_PRESETS: PresetPicker goes here
  *   - SLOT_IMPROVE: ImprovePromptButton goes here
  */
-export default function StudioConfigPane({ configState, setConfigState }: StudioConfigPaneProps) {
+export default function StudioConfigPane({
+  configState,
+  setConfigState,
+  mobileOpen = false,
+  onMobileClose,
+  mobileExtra,
+}: StudioConfigPaneProps) {
   const t = useTranslations("common");
   const tp = useTranslations("playground");
   const [collapsed, setCollapsed] = useState(false);
@@ -137,9 +148,9 @@ export default function StudioConfigPane({ configState, setConfigState }: Studio
     setConfigState({ ...configState, [key]: value });
   }
 
-  if (collapsed) {
+  if (collapsed && !mobileOpen) {
     return (
-      <div className="flex flex-col items-center w-8 shrink-0">
+      <div className="hidden md:flex flex-col items-center w-8 shrink-0">
         <button
           onClick={() => setCollapsed(false)}
           className="mt-2 p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-text-main transition-colors"
@@ -154,23 +165,38 @@ export default function StudioConfigPane({ configState, setConfigState }: Studio
 
   return (
     <aside
-      className="w-72 shrink-0 border-l border-border bg-surface flex flex-col overflow-y-auto"
+      className={`${
+        mobileOpen ? "fixed inset-0 z-50 flex" : "hidden md:flex"
+      } md:static md:inset-auto md:z-auto w-full md:w-72 shrink-0 border-l border-border bg-surface flex-col overflow-y-auto`}
       aria-label={tp("configPane")}
+      data-testid="playground-config"
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <span className="text-sm font-semibold text-text-main">{tp("configPane")}</span>
         <button
           onClick={() => setCollapsed(true)}
-          className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-text-main transition-colors"
+          className="hidden md:block p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-text-main transition-colors"
           title={tp("collapseConfig")}
           aria-label={tp("collapseConfig")}
         >
           <span className="material-symbols-outlined text-[16px]">chevron_right</span>
         </button>
+        <button
+          type="button"
+          onClick={onMobileClose}
+          data-testid="playground-sheet-close"
+          className="md:hidden inline-flex size-11 items-center justify-center rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-text-main transition-colors"
+          title={t("close")}
+          aria-label={t("close")}
+        >
+          <span className="material-symbols-outlined text-[20px]">close</span>
+        </button>
       </div>
 
       <div className="flex flex-col gap-5 p-4">
+        {mobileExtra}
+
         {/* PresetPicker */}
         <PresetPicker configState={configState} setConfigState={setConfigState} />
 

@@ -24,6 +24,7 @@ export const HIDEABLE_SIDEBAR_ITEM_IDS = [
   "costs-budget",
   "audit",
   "playground",
+  "settings",
   "settings-general",
   "settings-appearance",
   "settings-ai",
@@ -58,6 +59,10 @@ export interface SidebarItemDefinition {
   icon: string;
   exact?: boolean;
   external?: boolean;
+  /** A page that is not in the menu: the page of the menu it belongs to (the one crumb above it). */
+  parent?: SidebarItemId;
+  /** Shown only while debug mode is on. */
+  debugOnly?: boolean;
 }
 
 export interface SidebarItemGroup {

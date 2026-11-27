@@ -56,6 +56,8 @@ import HighlightableProviderCard from "./components/HighlightableProviderCard";
 import ProviderCountBadge from "./components/ProviderCountBadge";
 import ProviderSummaryCard from "./components/ProviderSummaryCard";
 import PopularProvidersSection from "./components/PopularProvidersSection";
+import AccountsOverview from "./components/AccountsOverview";
+import { anyAccountReportsLimits } from "./accountsSummary";
 import { getPopularProviderIds } from "./featuredProviders";
 import {
   buildCompactProviderEntriesForPage,
@@ -188,6 +190,9 @@ export default function ProvidersPage() {
     useState<CodexGlobalServiceMode>("none");
   const [loading, setLoading] = useState(true);
   const [showAllProviders, setShowAllProviders] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(
+    () => typeof window !== "undefined" && Boolean(window.history.state?.providerId)
+  );
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
   const [showAddAnthropicCompatibleModal, setShowAddAnthropicCompatibleModal] = useState(false);
   const [showAddCcCompatibleModal, setShowAddCcCompatibleModal] = useState(false);
@@ -249,6 +254,7 @@ export default function ProvidersPage() {
     const searchFromUrl = searchParams.get("search");
     if (searchFromUrl) {
       setSearchQuery(searchFromUrl);
+      setCatalogOpen(true);
     }
   }, [searchParams]);
 
@@ -829,6 +835,29 @@ export default function ProvidersPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <AccountsOverview
+        entries={dashboardProviderEntriesAll}
+        showLimits={anyAccountReportsLimits(connections)}
+        onAdd={() => router.push("/dashboard/providers/new")}
+      />
+
+      {/* The whole catalog, unchanged, one press away. */}
+      <details
+        open={catalogOpen}
+        onToggle={(event) => setCatalogOpen(event.currentTarget.open)}
+        className="group"
+        data-testid="all-providers"
+      >
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-card border border-border bg-surface px-3 py-2 text-sm font-medium text-text-main hover:bg-surface-2 [&::-webkit-details-marker]:hidden">
+          {providerText(t, "allProviders", "All providers")}
+          <span
+            className="material-symbols-outlined text-[20px] text-text-muted transition-transform group-open:rotate-180"
+            aria-hidden="true"
+          >
+            expand_more
+          </span>
+        </summary>
+        <div className="mt-4 flex flex-col gap-6">
       {showFirstProviderHint && (
         <Card padding="lg">
           <div className="flex flex-col items-center justify-center text-center">
@@ -1746,6 +1775,8 @@ export default function ProvidersPage() {
           )}
         </>
       )}
+        </div>
+      </details>
 
       <AddCompatibleProviderModal
         isOpen={showAddCompatibleModal}

@@ -198,6 +198,13 @@ const nextConfig = {
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },
+      // A one-time sign-in link and the answer that makes it: the address carries a secret, so
+      // no page that links onward may be told where it came from. Same key, so this replaces
+      // the value above.
+      ...["/login/link", "/api/auth/link"].map((source) => ({
+        source,
+        headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
+      })),
       // Streamed (SSE) API responses must not be buffered by nginx-style reverse proxies
       // (common in hosting panels); this header is a no-op for non-streaming responses.
       ...[

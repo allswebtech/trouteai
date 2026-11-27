@@ -1,5 +1,5 @@
 export * from "./sidebarVisibility/types";
-export { SIDEBAR_SECTIONS } from "./sidebarVisibility/sections";
+export { SIDEBAR_SECTIONS, LEGACY_PAGE_SECTIONS, ALL_PAGE_SECTIONS } from "./sidebarVisibility/sections";
 
 import { HIDEABLE_SIDEBAR_ITEM_IDS } from "./sidebarVisibility/types";
 import type {
@@ -38,6 +38,7 @@ export const SIDEBAR_ICON_ACCENTS: Partial<Record<SidebarItemId, string>> = {
   audit: "#F43F5E",
   playground: "#EAB308",
   "settings-general": "#64748B",
+  settings: "#64748B",
   "settings-appearance": "#D946EF",
   "settings-ai": "#A78BFA",
   "settings-routing": "#06B6D4",
@@ -111,20 +112,14 @@ export const SIDEBAR_ITEM_ORDER_KEY = "sidebarItemOrder";
 export const SIDEBAR_PRESET_KEY = "sidebarActivePreset";
 export const SIDEBAR_SETTINGS_UPDATED_EVENT = "trouteai:settings-updated";
 
-// The simple menu for non-technical users (default on fresh installs): the setup flow, usage,
-// logs and the basic settings. The sidebar footer toggle switches between this and "all".
+// The simple menu (default on fresh installs): the six pages. The sidebar footer toggle switches between this and "all".
 const MINIMAL_SHOWN: ReadonlySet<HideableSidebarItemId> = new Set([
   "home",
   "providers",
   "combos",
   "api-manager",
-  "endpoints",
-  "quota",
   "analytics",
-  "logs",
-  "settings-general",
-  "settings-security",
-  "settings-appearance",
+  "settings",
 ]);
 
 const DEVELOPER_SHOWN: ReadonlySet<HideableSidebarItemId> = new Set([
@@ -142,6 +137,7 @@ const DEVELOPER_SHOWN: ReadonlySet<HideableSidebarItemId> = new Set([
   "health",
   "runtime",
   "playground",
+  "settings",
   "settings-general",
   "settings-routing",
   "settings-resilience",
@@ -168,6 +164,7 @@ const ADMIN_SHOWN: ReadonlySet<HideableSidebarItemId> = new Set([
   "health",
   "runtime",
   "audit",
+  "settings",
   "settings-general",
   "settings-routing",
   "settings-resilience",

@@ -19,6 +19,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { isDashboardSessionTokenValid } from "../auth/dashboardSession";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { randomUUID } from "crypto";
+import { isLocalNodeRequest } from "../../../scripts/dev/request-locality.mjs";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -338,8 +339,8 @@ function subscribeToEventBus(): () => void {
 }
 
 function isLoopbackRequest(req: IncomingMessage): boolean {
-  const addr = req.socket.remoteAddress;
-  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+  // The one decision: loopback socket, loopback Host, no forwarding header (request-locality.mjs).
+  return isLocalNodeRequest(req);
 }
 
 function handleInternalEventRequest(req: IncomingMessage, res: ServerResponse): void {

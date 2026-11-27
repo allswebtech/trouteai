@@ -10,7 +10,6 @@ const getPlatformIsMac = () => {
   return /Mac|iPhone|iPad|iPod/.test(platform);
 };
 const getPlatformIsMacServer = () => false;
-import ThemeToggle from "./ThemeToggle";
 import TokenHealthBadge from "./TokenHealthBadge";
 import DegradationBadge from "./DegradationBadge";
 import LanguageSelector from "./LanguageSelector";
@@ -26,7 +25,7 @@ import {
   ANTHROPIC_COMPATIBLE_PREFIX,
 } from "@/shared/constants/providers";
 import {
-  SIDEBAR_SECTIONS,
+  ALL_PAGE_SECTIONS,
   getSectionItems,
   type SidebarItemDefinition,
   type HideableSidebarItemId,
@@ -69,7 +68,7 @@ const HEADER_DESCRIPTIONS: Partial<Record<HideableSidebarItemId | "proxy", strin
 
 // Build href → sidebar item lookup (non-external items only)
 const sidebarByHref = new Map<string, SidebarItemDefinition>();
-for (const section of SIDEBAR_SECTIONS) {
+for (const section of ALL_PAGE_SECTIONS) {
   for (const item of getSectionItems(section)) {
     if (!item.external) sidebarByHref.set(item.href, item);
   }
@@ -108,6 +107,7 @@ type PageInfo = {
 function usePageInfo(pathname: string | null): PageInfo {
   const ts = useTranslations("sidebar");
   const th = useTranslations("header");
+  const te = useTranslations("easy");
 
   if (!pathname) return { title: "", description: "" };
 
@@ -123,6 +123,10 @@ function usePageInfo(pathname: string | null): PageInfo {
       return { title: th("openaiCompatible"), description: "", providerId: "oai-cc" };
     if (pid.startsWith(ANTHROPIC_COMPATIBLE_PREFIX))
       return { title: th("anthropicCompatible"), description: "", providerId: "anthropic-m" };
+  }
+
+  if (pathname.startsWith("/dashboard/media-providers")) {
+    return { title: te("accountMedia"), description: "" };
   }
 
   // Derive from sidebar
@@ -255,7 +259,6 @@ export default function Header({
         )}
         {/* Shown only when more than one language is configured (config/i18n.json). */}
         {LANGUAGES.length > 1 && <LanguageSelector />}
-        <ThemeToggle />
         {!isE2EMode && <DegradationBadge />}
         {!isE2EMode && <TokenHealthBadge />}
         <button

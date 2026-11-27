@@ -1,5 +1,6 @@
 import { register } from "../registry.ts";
 import { FORMATS } from "../formats.ts";
+import { newResponseId } from "../../utils/responseId.ts";
 
 type AntigravityCandidate = {
   content: {
@@ -37,7 +38,7 @@ export function openaiToAntigravityResponse(chunk, state) {
 
   // Init state
   if (!state._toolCallAccum) state._toolCallAccum = {};
-  if (!state._responseId) state._responseId = chunk.id || `resp_${Date.now()}`;
+  if (!state._responseId) state._responseId = chunk.id || newResponseId();
   if (!state._modelVersion) state._modelVersion = chunk.model || "";
 
   const parts = [];

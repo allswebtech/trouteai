@@ -26,7 +26,7 @@ suite() {
   fi
 }
 
-[ $# -eq 0 ] && set -- smoke context quota status answers models fit idle load checks
+[ $# -eq 0 ] && set -- smoke context quota status answers models fit restart idle load checks
 for s in "$@"; do
   case "$s" in
     smoke) suite smoke sh "$HERE/smoke/run.sh" ;;
@@ -36,6 +36,7 @@ for s in "$@"; do
     answers) suite answers sh "$HERE/smoke/answers.sh" ;;
     models) suite models sh "$HERE/smoke/models.sh" ;;
     fit) suite fit sh "$HERE/smoke/fit.sh" ;;
+    restart) suite restart sh "$HERE/smoke/restart.sh" ;;
     idle) suite idle sh "$HERE/smoke/idle.sh" ;;
     load) suite load sh "$HERE/smoke/load.sh" ;;
     # the checks the smoke test does not run already
@@ -46,8 +47,10 @@ for s in "$@"; do
       check-claude-reference.mts check-vision.mts check-answer-model.mts \
       check-models-catalog.mts check-swaps.mts check-combo-status.mts \
       check-cache-pass.mts check-fair-queue.mts check-cost-view.mts \
-      check-new-conversations.mts check-high-load.mts check-key-priority.mts ;;
-    *) echo "unknown suite: $s (smoke, context, quota, status, answers, models, fit, idle, load, checks)"; exit 2 ;;
+      check-new-conversations.mts check-high-load.mts check-key-priority.mts \
+      check-response-ids.mts check-externals.mts check-accounts-summary.mts \
+      check-easy-menu.mts check-home-connect.mts ;;
+    *) echo "unknown suite: $s (smoke, context, quota, status, answers, models, fit, restart, idle, load, checks)"; exit 2 ;;
   esac
 done
 

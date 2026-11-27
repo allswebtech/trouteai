@@ -1,6 +1,6 @@
 {
   "name": "trouteai",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Your AI. Your Models. Your Rules. An open-source, self-hosted AI gateway to route, manage, and optimize multiple LLM providers through a single OpenAI- and Anthropic-compatible API.",
   "keywords": [
     "ai",

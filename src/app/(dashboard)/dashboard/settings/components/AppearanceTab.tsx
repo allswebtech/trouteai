@@ -15,7 +15,7 @@ import { PIN_PROVIDER_QUOTA_TO_HOME_KEY } from "@/shared/constants/homeWidgets";
 import AccountEmailVisibilitySetting from "./AccountEmailVisibilitySetting";
 
 export default function AppearanceTab() {
-  const { theme, setTheme, isDark } = useTheme();
+  const { theme, setTheme } = useTheme();
   const { colorTheme, customColor, setColorTheme, setCustomColorTheme } = useThemeStore();
   const t = useTranslations("settings");
 
@@ -30,8 +30,7 @@ export default function AppearanceTab() {
     customThemeColor.startsWith("#") ? customThemeColor : `#${customThemeColor}`
   );
   const pinProviderQuotaToHome = settings.pinProviderQuotaToHome === true;
-  const showQuickStartOnHome = settings.showQuickStartOnHome !== false;
-  const showProviderTopologyOnHome = settings.showProviderTopologyOnHome !== false;
+  const showProviderTopologyOnHome = settings.showProviderTopologyOnHome === true;
   const autoRefreshProviderQuota = settings.autoRefreshProviderQuota === true;
   const autoRefreshProviderQuotaInterval = Number.isFinite(
     settings.autoRefreshProviderQuotaInterval
@@ -140,15 +139,7 @@ export default function AppearanceTab() {
         <h3 className="text-sm font-semibold text-text-main">{t("appearance")}</h3>
       </div>
       <div className="flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="font-medium">{t("darkMode")}</p>
-            <p className="text-sm text-text-muted">{t("switchThemes")}</p>
-          </div>
-          <Toggle checked={isDark} onChange={() => setTheme(isDark ? "light" : "dark")} />
-        </div>
-
-        <div className="pt-4 border-t border-border">
+        <div>
           <div
             role="tablist"
             aria-label={t("themeSelectionAria")}
@@ -202,25 +193,6 @@ export default function AppearanceTab() {
                   checked={pinProviderQuotaToHome}
                   onChange={async (checked) => {
                     await updateSetting(PIN_PROVIDER_QUOTA_TO_HOME_KEY, checked);
-                  }}
-                  disabled={loading}
-                />
-              </div>
-
-              <div className="flex items-start justify-between gap-4 px-4 py-3">
-                <div>
-                  <p className="font-medium">{getSettingsLabel("homeQuickStart", "Quick Start")}</p>
-                  <p className="text-sm text-text-muted">
-                    {getSettingsLabel(
-                      "homeQuickStartDesc",
-                      "Show the Quick Start panel on the Home page."
-                    )}
-                  </p>
-                </div>
-                <Toggle
-                  checked={showQuickStartOnHome}
-                  onChange={async (checked) => {
-                    await updateSetting("showQuickStartOnHome", checked);
                   }}
                   disabled={loading}
                 />

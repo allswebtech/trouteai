@@ -3,6 +3,78 @@
 What changed in each TRouteAI release. Update with `trouteai update`; on a hosting panel,
 deploy again.
 
+## 1.0.12 (2026-11-27): easier pages, a sign-in link, a stricter local rule
+
+### Easier to use
+
+- **A menu of six.** The side menu now shows six pages: Home, Accounts, Combos, API Keys, Usage and
+  Settings, with no group headings and no search box. **Show all menus** adds the Status pages
+  (Activity, Health, Runtime and Playground).
+- **A first run that says the one next thing.** The sign-in page shows only the sign-in box. An empty
+  Home is a title and one **Add account** button; once you have an account, Home shows the address,
+  a key to make and the model to copy under **Connect a coding tool**. The old Get started card is
+  gone, and so is the Quick Start switch in Appearance.
+- **Accounts first.** The old Providers pages are now **Accounts**: one row per provider you use with
+  a plain status (connected, needs attention, not tested yet), the full catalog behind a closed
+  fold, and one **Add account** button. A provider page has one add button, one-line empty states,
+  and the model switch and the less used options in closed folds. An account that was never tested
+  shows as connected, not as an error.
+- **Usage in tabs.** Overview, Requests and Costs share one tab bar and one range selector, with
+  the less used parts behind a closed **More** fold. Empty pages are one line, and the console and
+  tables fit a phone.
+- **Combos and API Keys.** One head, one create button (also when the page is empty), a closed
+  **More** fold, rows that fit a phone and a filter that only shows when you have many keys. A combo
+  of API-key accounts no longer shows **Needs attention** only because no quota figure exists, and a
+  priority combo is not flagged for sending to its first step.
+- **Phone first.** Menu entries, breadcrumb links and filter chips are at least 44 px high, and
+  Playground chat uses the full width.
+- **Clearer words.** Pages say Account instead of Provider and Connection, and the example model
+  in Endpoint is written as provider/model.
+
+### Added
+
+- **A list of providers for programs that manage the gateway.** `GET /api/providers/catalog` (the
+  command token or a key with the manage scope) lists every provider with how an account is added:
+  by key, by device code, by a link and a pasted code, or only in the gateway's own page.
+- **A one-time sign-in link.** `POST /api/auth/link` (same rights) answers a link that signs in once
+  within 60 seconds and opens the dashboard, so a program does not need the password.
+
+### Security
+
+- **A public address is always treated as from outside.** A request counts as coming from this
+  computer only when it arrives over this computer's own loopback, names a loopback address as its
+  Host and carries no forwarding header. A tunnel or proxy on the same computer that passes on a
+  public name is therefore treated as remote and stays behind the sign-in. Using the dashboard at
+  `localhost` or `127.0.0.1` on the computer itself works as before.
+
+### Fixed
+
+- **A removed key stops working at once.** Before, a key that was deleted, switched off or banned
+  was still answered for up to a minute, until a restart in some cases, because each part of the
+  server kept its own copy of the key cache. Now it is refused on the very next request.
+- **The Restart button brings the gateway back.** Started with the `trouteai` command, the gateway
+  now starts again on the same port after Restart, also on Windows (before, it only stopped). Started some other way
+  (for example `node app.cjs`), Restart says that nothing would start it again and does nothing;
+  set `TROUTEAI_RESTART_SUPERVISED=true` when a hosting panel or a service manager restarts it for
+  you.
+- **A copy installed by one user starts for another.** Before, a copy installed globally by root
+  and started by a normal user said it was ready and answered an error to every request. The
+  release no longer needs any link made at install or at start. A copy that still cannot be set up
+  stops with one sentence that says what to do.
+- **A response id is never repeated.** The id the gateway makes when a provider sent none could
+  repeat for two answers in the same millisecond. It now has a random part.
+
+### Docs
+
+- `HOST` is empty by default (only this computer), as the command line says; the README now says so,
+  and it explains the way out of an EACCES error, how to read the first password and how to make a
+  key with `trouteai key create`.
+- An install test (`tests/smoke/install-e2e.mjs`) installs the packed build the way the README says,
+  starts it, makes a key, asks the model list, stops it, and checks an upgrade from 1.0.10 keeps the
+  providers, keys and password. A workflow runs it on Ubuntu, macOS and Windows.
+
+Updating from 1.0.11 changes nothing in your accounts, keys and combos; only the pages look different.
+
 ## 1.0.11 (2026-11-25): a priority per key, conversations kept together
 
 - **A default priority per API key.** On a key's page in **API Keys**, choose whether its requests

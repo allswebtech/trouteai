@@ -53,10 +53,10 @@ npm install -g trouteai
 trouteai
 ```
 
-Open <http://localhost:20017> and sign in with the first password (the terminal shows where it is
-saved). Add a provider, create an API key, and point your app at `http://localhost:20017/v1`.
-[Install](#install) has the details, [Host it on a server](#host-it-on-a-server) the steps for a
-server.
+Open <http://localhost:20017> and sign in with the first password ([Install](#install) shows how
+to read it). Press **Add account**, then **Connect a coding tool** on Home: it shows the address,
+a key and a model name to paste into your app. [Host it on a server](#host-it-on-a-server) has the
+steps for a server.
 
 <p align="center">
   <picture>
@@ -139,9 +139,19 @@ The extra options keep the install quiet and let the two TLS helpers of the brow
 providers (ChatGPT Web, Claude Web, Grok Web, Perplexity Web) finish their setup. Plain
 `npm install -g trouteai` works too; newer npm versions then print a note about install scripts.
 
+If the install stops with `EACCES` (permission denied), install Node.js from nodejs.org or with
+nvm, which put it in your own folder, or run `npm config set prefix ~/.npm-global` and add
+`~/.npm-global/bin` to your `PATH`. Do not use `sudo`.
+
 Open <http://localhost:20017> and sign in. On the first start TRouteAI creates a random
 dashboard password and saves it to `initial-admin-password.txt` in the data folder (the start
-screen shows the exact path). Stop TRouteAI with `Ctrl+C`.
+screen shows the exact path). To read it:
+
+- macOS and Linux: `cat ~/.trouteai/initial-admin-password.txt`
+- Windows (PowerShell): `Get-Content "$env:APPDATA\trouteai\initial-admin-password.txt"`
+  (or `$HOME\.trouteai\initial-admin-password.txt` if that folder exists)
+
+Stop TRouteAI with `Ctrl+C`.
 
 | Command                          | What it does                 |
 | -------------------------------- | ---------------------------- |
@@ -150,6 +160,7 @@ screen shows the exact path). Stop TRouteAI with `Ctrl+C`.
 | `trouteai config`                | Show your settings           |
 | `trouteai config set PORT 20018` | Change a setting             |
 | `trouteai reset-password`        | Set a new dashboard password |
+| `trouteai key create NAME`       | Make an API key, shown once  |
 | `trouteai update`                | Update to the latest version |
 | `trouteai uninstall`             | Remove TRouteAI              |
 | `trouteai --help`                | All commands and options     |
@@ -165,7 +176,7 @@ All settings are in one file, `.env` in the data folder (`~/.trouteai/.env`; on 
 | Setting                | Default   | Meaning                                                                      |
 | ---------------------- | --------- | ---------------------------------------------------------------------------- |
 | `PORT`                 | `20017`   | Port for the dashboard and the API                                           |
-| `HOST`                 | `0.0.0.0` | `0.0.0.0` = this computer and your network, `127.0.0.1` = only this computer |
+| `HOST`                 | empty     | empty = only this computer, `0.0.0.0` = this computer and your network       |
 | `INITIAL_PASSWORD`     | empty     | Password for the first login (8+ characters); empty = random password file   |
 | `REQUIRE_API_KEY`      | `true`    | Apps must send an API key created in the dashboard                           |
 | `NEXT_PUBLIC_BASE_URL` | empty     | Your public address behind a domain, for example `https://ai.example.com`    |
@@ -186,20 +197,19 @@ it with `TROUTEAI_MAX_HEAP_MB` if the log shows "JavaScript heap out of memory".
 ## Connect your apps
 
 1. Open the dashboard and log in.
-2. **Home** shows a short "Get started" checklist that links to each step below. It also shows
-   the base URL, API key and model to paste into your app.
-3. **Providers** → pick a popular provider and paste its API key, or use **Step-by-step setup**
+2. **Home** shows one thing before any account: **Add account**. Press it and follow the steps
    (API key, account sign-in, or a custom OpenAI/Anthropic-compatible server).
-4. **API Keys** → create an API key (`sk-…`). It is shown once, with copy buttons.
-5. **Combos** → create a combo, for example `my-combo` = `openai/gpt-4o-mini` → `anthropic/…`
-   ("In order" = try the first model, fall back to the next on errors or limits).
-6. Use it from any client (on a server, replace `http://localhost:20017` with your address):
+3. Home then shows **Connect a coding tool**: the address, a key (**Make a key** creates one and
+   shows it once, with a copy button) and a model name to paste into your app.
+4. Optional: **Combos** → create a combo, for example `best` = `openai/gpt-4o-mini` →
+   `anthropic/…` ("In order" = try the first model, fall back to the next on errors or limits).
+5. Use it from any client (on a server, replace `http://localhost:20017` with your address):
 
 ```bash
 curl http://localhost:20017/v1/chat/completions \
   -H "Authorization: Bearer sk-your-key" \
   -H "Content-Type: application/json" \
-  -d '{"model":"my-combo","stream":false,"messages":[{"role":"user","content":"Hello"}]}'
+  -d '{"model":"openai/gpt-4o-mini","stream":false,"messages":[{"role":"user","content":"Hello"}]}'
 ```
 
 - OpenAI-compatible base URL: `http://localhost:20017/v1` (`/chat/completions`, `/responses`,
@@ -224,7 +234,7 @@ bottom of the sidebar to see every page.
 ```bash
 export ANTHROPIC_BASE_URL="http://localhost:20017"      # no /v1: Claude Code adds /v1/messages
 export ANTHROPIC_AUTH_TOKEN="sk-your-key"
-export ANTHROPIC_MODEL="my-combo"
+export ANTHROPIC_MODEL="cc/claude-sonnet-5-5"
 export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1      # /model lists your TRouteAI models
 claude
 ```

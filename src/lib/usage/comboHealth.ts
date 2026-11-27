@@ -318,17 +318,16 @@ function buildPerformance(comboName: string, since: string): ComboHealthMetrics[
 }
 
 function buildQuotaHealth(providers: string[], since: string): ComboHealthMetrics["quotaHealth"] {
-  const providerHealth = providers.map((provider) =>
-    buildProviderHealth(provider, getQuotaSnapshots({ provider, since }))
+  const snapshotsByProvider = providers.map((provider) => getQuotaSnapshots({ provider, since }));
+  const providerHealth = providers.map((provider, index) =>
+    buildProviderHealth(provider, snapshotsByProvider[index])
   );
 
+  // A provider that reports no quota (an API key account) says nothing about the worst quota: it
+  // must not count as 0 percent left. With no figure from any provider, nothing is running out.
+  const known = providerHealth.filter((_, index) => snapshotsByProvider[index].length > 0);
   const worstRemainingPct =
-    providerHealth.length > 0
-      ? providerHealth.reduce(
-          (lowest, entry) => Math.min(lowest, entry.remainingPct),
-          providerHealth[0].remainingPct
-        )
-      : 0;
+    known.length > 0 ? Math.min(...known.map((entry) => entry.remainingPct)) : 100;
 
   return {
     providers: providerHealth,

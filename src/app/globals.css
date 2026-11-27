@@ -686,3 +686,18 @@ select option {
     color: #38bdf8;
   }
 }
+
+/* A finger needs 44 px: on a touch screen every button, link in the menu, select and fold head is at
+   least that big. Switches and boxes keep their own size (their label is the target). */
+@media (pointer: coarse) {
+  button:not([role="switch"]):not([role="checkbox"]):not([role="radio"]),
+  [role="button"],
+  [role="tab"],
+  select,
+  summary,
+  aside a:not(.sr-only),
+  header a {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

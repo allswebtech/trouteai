@@ -1,5 +1,6 @@
 import { appendToolCallArgumentDelta } from "../utils/toolCallArguments.ts";
 import { sanitizeErrorMessage } from "../utils/error.ts";
+import { newResponseId } from "../utils/responseId.ts";
 
 /**
  * Extract a provider error message from a buffered SSE stream that carries an
@@ -827,7 +828,7 @@ export function parseSSEToResponsesOutput(rawSSE, fallbackModel) {
               : "in_progress";
 
   return {
-    id: picked.id != null ? String(picked.id) : `resp_${Date.now()}`,
+    id: picked.id != null ? String(picked.id) : newResponseId(),
     object: picked.object || "response",
     model: picked.model || fallbackModel || "unknown",
     output: chosenOutput.map((item) => {

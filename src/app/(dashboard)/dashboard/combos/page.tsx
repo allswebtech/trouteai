@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import Button from "@/shared/components/Button";
 import Card from "@/shared/components/Card";
+import Collapsible from "@/shared/components/Collapsible";
 import { CardSkeleton } from "@/shared/components/Loading";
 import Input from "@/shared/components/Input";
 import Modal from "@/shared/components/Modal";
@@ -423,7 +424,6 @@ const STRATEGY_RECOMMENDATIONS_FALLBACK = {
   },
 };
 
-const COMBO_USAGE_GUIDE_STORAGE_KEY = "trouteai:combos:hide-usage-guide";
 // Guided-mode stage cards. `labelKey`/`descriptionKey` hold plain-language wording for
 // non-technical users (the older `builderStage.<id>.*` keys are no longer read here).
 const COMBO_FORM_STAGE_META = [
@@ -770,7 +770,6 @@ export default function CombosPage() {
     const timer = setInterval(() => setLimitClock((tick) => tick + 1), 60_000);
     return () => clearInterval(timer);
   }, [hasConnectionLimits]);
-  const [showUsageGuide, setShowUsageGuide] = useState(true);
   const [recentlyCreatedCombo, setRecentlyCreatedCombo] = useState("");
   const [comboDragIndex, setComboDragIndex] = useState(null);
   const [comboDragOverIndex, setComboDragOverIndex] = useState(null);
@@ -834,16 +833,6 @@ export default function CombosPage() {
       .then((r) => (r.ok ? r.json() : null))
       .then((c) => setProxyConfig(c))
       .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    try {
-      if (globalThis.localStorage?.getItem(COMBO_USAGE_GUIDE_STORAGE_KEY) === "1") {
-        setShowUsageGuide(false);
-      }
-    } catch {
-      // Ignore storage access errors (privacy mode / restricted environments)
-    }
   }, []);
 
   const fetchData = async () => {
@@ -1024,20 +1013,6 @@ export default function CombosPage() {
     }
   };
 
-  const handleHideUsageGuideForever = () => {
-    setShowUsageGuide(false);
-    try {
-      globalThis.localStorage?.setItem(COMBO_USAGE_GUIDE_STORAGE_KEY, "1");
-    } catch {}
-  };
-
-  const handleShowUsageGuide = () => {
-    setShowUsageGuide(true);
-    try {
-      globalThis.localStorage?.removeItem(COMBO_USAGE_GUIDE_STORAGE_KEY);
-    } catch {}
-  };
-
   const handleFilterChange = (nextFilter) => {
     const params = new URLSearchParams(searchParams.toString());
 
@@ -1140,53 +1115,14 @@ export default function CombosPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">{t("title")}</h1>
-          <p className="text-sm text-text-muted mt-1">
-            {getI18nOrFallback(
-              t,
-              "pageDescriptionSimple",
-              "Give your apps one model name. If a model fails or hits a limit, the next one takes over."
-            )}
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {!showUsageGuide && combos.length > 0 && (
-            <Button size="sm" variant="ghost" onClick={handleShowUsageGuide}>
-              {getI18nOrFallback(t, "usageGuideShow", "Show guide")}
-            </Button>
-          )}
-          <Button icon="add" onClick={() => setShowCreateModal(true)}>
-            {t("createCombo")}
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold">{t("title")}</h1>
+        {combos.length > 0 && (
+          <Button icon="add" onClick={() => setShowCreateModal(true)} data-testid="combos-new">
+            {getI18nOrFallback(t, "newCombo", "New combo")}
           </Button>
-        </div>
+        )}
       </div>
-
-      <Card padding="sm">
-        <Toggle
-          checked={modelsCombosOnly}
-          disabled={savingCombosOnly}
-          onChange={handleToggleCombosOnly}
-          label={getI18nOrFallback(t, "combosOnlyLabel", "Only combos as models")}
-          description={getI18nOrFallback(
-            t,
-            "combosOnlyDescription",
-            "When on, the model list your apps get (/v1/models) shows only your combos."
-          )}
-        />
-      </Card>
-
-      {/* With no combos yet, the empty-state card below already explains combos and offers
-          the create button, so the guide only shows once at least one combo exists. */}
-      {showUsageGuide && combos.length > 0 && (
-        <ComboUsageGuide
-          onHide={() => setShowUsageGuide(false)}
-          onHideForever={handleHideUsageGuideForever}
-          onCreateCombo={() => setShowCreateModal(true)}
-        />
-      )}
 
       {recentlyCreatedCombo && (
         <Card padding="sm" className="border border-success/20 bg-success/[0.04]">
@@ -1229,55 +1165,6 @@ export default function CombosPage() {
           </div>
         </Card>
       )}
-      {combos.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-card border border-border bg-surface-2/50 p-1">
-          {[
-            {
-              id: "all",
-              icon: "layers",
-              label: getI18nOrFallback(t, "filterAll", "All"),
-              count: combos.length,
-            },
-            {
-              id: "intelligent",
-              icon: "auto_awesome",
-              label: getI18nOrFallback(t, "filterIntelligent", "Intelligent"),
-              count: combos.filter(
-                (combo) => getStrategyCategory(combo?.strategy) === "intelligent"
-              ).length,
-            },
-            {
-              id: "deterministic",
-              icon: "sort",
-              label: getI18nOrFallback(t, "filterDeterministic", "Deterministic"),
-              count: combos.filter(
-                (combo) => getStrategyCategory(combo?.strategy) === "deterministic"
-              ).length,
-            },
-          ].map((tab) => {
-            const isActive = activeFilter === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => handleFilterChange(tab.id)}
-                className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all ${
-                  isActive
-                    ? "border border-primary/20 bg-primary/10 text-primary-text"
-                    : "border border-transparent text-text-muted hover:bg-surface-2 hover:text-text-main"
-                }`}
-              >
-                <span className="material-symbols-outlined text-[16px]">{tab.icon}</span>
-                <span>{tab.label}</span>
-                <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-muted">
-                  {tab.count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
       {activeFilter === "intelligent" && selectedIntelligentCombo && (
         <IntelligentComboPanel
           t={t}
@@ -1408,9 +1295,95 @@ export default function CombosPage() {
         </div>
       )}
 
-      {/* Built-in auto combos: collapsed reference info, kept below the user's own combos so
-          the main action (create a combo) stays at the top. */}
-      <AutoComboCatalog />
+      {/* Everything that is not the list of combos waits in one closed fold. */}
+      <Collapsible
+        title={getI18nOrFallback(t, "moreFold", "More")}
+        variant="inline"
+        className="[&_button]:min-h-11"
+      >
+        <div className="flex flex-col gap-4" data-testid="combos-more">
+          {combos.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-card border border-border bg-surface-2/50 p-1">
+              {[
+                {
+                  id: "all",
+                  icon: "layers",
+                  label: getI18nOrFallback(t, "filterAll", "All"),
+                  count: combos.length,
+                },
+                {
+                  id: "intelligent",
+                  icon: "auto_awesome",
+                  label: getI18nOrFallback(t, "filterIntelligent", "Intelligent"),
+                  count: combos.filter(
+                    (combo) => getStrategyCategory(combo?.strategy) === "intelligent"
+                  ).length,
+                },
+                {
+                  id: "deterministic",
+                  icon: "sort",
+                  label: getI18nOrFallback(t, "filterDeterministic", "Deterministic"),
+                  count: combos.filter(
+                    (combo) => getStrategyCategory(combo?.strategy) === "deterministic"
+                  ).length,
+                },
+              ].map((tab) => {
+                const isActive = activeFilter === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => handleFilterChange(tab.id)}
+                    className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all ${
+                      isActive
+                        ? "border border-primary/20 bg-primary/10 text-primary-text"
+                        : "border border-transparent text-text-muted hover:bg-surface-2 hover:text-text-main"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">{tab.icon}</span>
+                    <span>{tab.label}</span>
+                    <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-muted">
+                      {tab.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <Toggle
+            checked={modelsCombosOnly}
+            disabled={savingCombosOnly}
+            onChange={handleToggleCombosOnly}
+            label={getI18nOrFallback(t, "combosOnlyLabel", "Only combos as models")}
+            description={getI18nOrFallback(
+              t,
+              "combosOnlyDescription",
+              "When on, the model list your apps get (/v1/models) shows only your combos."
+            )}
+          />
+          <AutoComboCatalog />
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/dashboard/combos/live"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
+            >
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                monitoring
+              </span>
+              {getI18nOrFallback(t, "liveViewLink", "Live view")}
+            </Link>
+            <Link
+              href="/dashboard/combos/playground"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
+            >
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                route
+              </span>
+              {getI18nOrFallback(t, "tryRouteLink", "Try a route")}
+            </Link>
+          </div>
+        </div>
+      </Collapsible>
 
       {testResults && (
         <Modal
@@ -1463,120 +1436,6 @@ const COMBO_EMPTY_STATE_STEPS = [
   { key: "emptyStateStepModels", fallback: "Add models in the order you want" },
   { key: "emptyStateStepUse", fallback: "Use that name as the model in your app" },
 ];
-
-const COMBO_WIZARD_STEPS = [
-  {
-    step: 1,
-    icon: "badge",
-    titleKey: "wizardStep1Title",
-    descKey: "usageGuideStep1DescSimple",
-    descFallback: "Pick a short name. Your apps will use it as the model name.",
-  },
-  {
-    step: 2,
-    icon: "hub",
-    titleKey: "wizardStep2Title",
-    descKey: "usageGuideStep2DescSimple",
-    descFallback: "Add the models you want, in the order they should be tried.",
-  },
-  {
-    step: 3,
-    icon: "route",
-    titleKey: "wizardStep3Title",
-    descKey: "usageGuideStep3DescSimple",
-    descFallback: 'Choose how a model is picked. "In order" works for most people.',
-  },
-  {
-    step: 4,
-    icon: "check_circle",
-    titleKey: "wizardStep4Title",
-    descKey: "usageGuideStep4DescSimple",
-    descFallback: "Check everything and save. Your combo is ready to use.",
-  },
-];
-
-function ComboUsageGuide({ onHide, onHideForever, onCreateCombo }) {
-  const t = useTranslations("combos");
-
-  return (
-    <Card padding="sm">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="size-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-primary-text text-[16px]">
-              tips_and_updates
-            </span>
-          </div>
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold">
-              {getI18nOrFallback(t, "wizardGuideTitle", "Getting Started with Combos")}
-            </h2>
-            <p className="text-xs text-text-muted mt-0.5">
-              {getI18nOrFallback(
-                t,
-                "usageGuideDescSimple",
-                "A combo gives your apps one model name, with backup models behind it."
-              )}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <Button size="sm" variant="ghost" onClick={onHide} className="!h-6 px-2 text-[10px]">
-            {getI18nOrFallback(t, "usageGuideHide", "Hide")}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onHideForever}
-            className="!h-6 px-2 text-[10px]"
-          >
-            {getI18nOrFallback(t, "usageGuideDontShowAgain", "Don't show again")}
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
-        {COMBO_WIZARD_STEPS.map((step, index) => {
-          return (
-            <div
-              key={step.step}
-              className="relative rounded-lg border border-border bg-surface-2/50 p-2.5"
-            >
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <span className="inline-flex size-5 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary-text">
-                  {step.step}
-                </span>
-                <span className="material-symbols-outlined text-[14px] text-primary-text">
-                  {step.icon}
-                </span>
-              </div>
-              <p className="text-xs font-medium">
-                {getI18nOrFallback(t, step.titleKey, step.titleKey)}
-              </p>
-              <p className="mt-1 text-[11px] leading-4 text-text-muted">
-                {getI18nOrFallback(t, step.descKey, step.descFallback)}
-              </p>
-              {index < COMBO_WIZARD_STEPS.length - 1 && (
-                <span className="absolute -right-2.5 top-1/2 z-10 hidden -translate-y-1/2 text-text-muted md:block">
-                  <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="mt-3 flex items-center gap-2">
-        <Button size="sm" icon="add" onClick={onCreateCombo}>
-          {getI18nOrFallback(t, "createFirstCombo", "Create Your First Combo")}
-        </Button>
-        <span className="text-[10px] text-text-muted">
-          {getI18nOrFallback(t, "wizardGuideHint", "or click + Create Combo above")}
-        </span>
-      </div>
-    </Card>
-  );
-}
 
 function StrategyGuidanceCard({ strategy }) {
   const t = useTranslations("combos");
@@ -1772,6 +1631,7 @@ function ComboCardInner({
   const tc = useTranslations("common");
   const emailsVisible = useEmailPrivacyStore((s) => s.emailsVisible);
   const strategyDescription = getStrategyDescription(t, strategy);
+  const [actionsOpen, setActionsOpen] = useState(false);
 
   return (
     <Card
@@ -1790,7 +1650,7 @@ function ComboCardInner({
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
             data-testid={`combo-drag-handle-${combo.id}`}
-            className={`p-1 rounded-md transition-colors shrink-0 ${
+            className={`hidden md:block p-1 rounded-md transition-colors shrink-0 ${
               dragDisabled
                 ? "cursor-not-allowed text-text-muted/50"
                 : "cursor-grab active:cursor-grabbing text-text-muted hover:text-primary-text hover:bg-surface-2"
@@ -1805,8 +1665,10 @@ function ComboCardInner({
             <span className="material-symbols-outlined text-primary-text text-[18px]">layers</span>
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <code className="text-sm font-medium font-mono truncate">{combo.name}</code>
+            <div className="flex flex-wrap items-center gap-2">
+              <code className="text-sm font-medium font-mono truncate max-w-full">
+                {combo.name}
+              </code>
               <Tooltip content={strategyDescription}>
                 <span
                   className={`text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded-full ${getStrategyBadgeClass(
@@ -1830,7 +1692,7 @@ function ComboCardInner({
                   e.stopPropagation();
                   onCopy(combo.name, `combo-${combo.id}`);
                 }}
-                className="p-0.5 hover:bg-surface-2 rounded text-text-muted hover:text-primary-text transition-colors opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                className="hidden md:block p-0.5 hover:bg-surface-2 rounded text-text-muted hover:text-primary-text transition-colors md:opacity-0 md:group-hover:opacity-100"
                 title={t("copyComboName")}
               >
                 <span className="material-symbols-outlined text-[14px]">
@@ -1925,7 +1787,19 @@ function ComboCardInner({
               {isDisabled ? "Disabled" : "Active"}
             </span>
           </div>
-          <div className="flex items-center gap-1.5 transition-opacity">
+          <button
+            type="button"
+            onClick={() => setActionsOpen((v) => !v)}
+            aria-expanded={actionsOpen}
+            aria-label={getI18nOrFallback(t, "moreActions", "More actions")}
+            data-testid={`combo-more-${combo.id}`}
+            className="md:hidden inline-flex size-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface-2 hover:text-primary-text transition-colors"
+          >
+            <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+              more_horiz
+            </span>
+          </button>
+          <div className="hidden md:flex items-center gap-1.5 transition-opacity">
             {compressionEnabled && (
               <ComboCompressionModeSelect
                 combo={combo}
@@ -1983,6 +1857,73 @@ function ComboCardInner({
             </button>
           </div>
         </div>
+        {actionsOpen && (
+          <div
+            className="md:hidden grid grid-cols-2 gap-2 pt-2"
+            data-testid={`combo-actions-${combo.id}`}
+          >
+            {compressionEnabled && (
+              <div className="col-span-2">
+                <ComboCompressionModeSelect
+                  combo={combo}
+                  title={t("compressionOverride")}
+                  className="min-h-11 w-full text-sm py-1 px-2 rounded border border-border bg-surface text-text-main focus:border-primary focus:outline-none transition-colors disabled:opacity-50"
+                />
+              </div>
+            )}
+            {[
+              {
+                key: "copy",
+                icon: copied === `combo-${combo.id}` ? "check" : "content_copy",
+                label: t("copyComboName"),
+                run: () => onCopy(combo.name, `combo-${combo.id}`),
+              },
+              {
+                key: "test",
+                icon: testing ? "progress_activity" : "play_arrow",
+                label: t("testCombo"),
+                run: onTest,
+                disabled: testing,
+              },
+              { key: "edit", icon: "edit", label: tc("edit"), run: onEdit },
+              { key: "duplicate", icon: "content_copy", label: t("duplicate"), run: onDuplicate },
+              { key: "proxy", icon: "vpn_lock", label: t("proxyConfig"), run: onProxy },
+              {
+                key: "delete",
+                icon: "delete",
+                label: tc("delete"),
+                run: onDelete,
+                danger: true,
+              },
+            ].map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={item.run}
+                disabled={item.disabled}
+                className={`inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm transition-colors hover:bg-surface-2 ${
+                  item.danger ? "text-error" : "text-text-main"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                  {item.icon}
+                </span>
+                <span className="min-w-0 break-words text-left leading-tight">{item.label}</span>
+              </button>
+            ))}
+            <Link
+              href={`/dashboard/combos/${combo.id}`}
+              className="col-span-2 inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
+            >
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                monitoring
+              </span>
+              <span className="min-w-0 break-words text-left leading-tight">
+                {getI18nOrFallback(t, "controlCenter", "Control Center")}
+              </span>
+            </Link>
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -3037,25 +2978,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, combo
         <div className="flex flex-col gap-3">
           {!isExpertMode && (
             <div className="rounded-lg border border-border bg-surface-2/50 p-3">
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <div>
-                  <p className="text-xs font-semibold text-text-main">
-                    {getI18nOrFallback(t, "builderFlowTitleSimple", "Create a combo step by step")}
-                  </p>
-                  <p className="text-[10px] text-text-muted mt-0.5">
-                    {getI18nOrFallback(
-                      t,
-                      "builderFlowDescSimple",
-                      "Go through the steps in order. You can go back and change anything before you save."
-                    )}
-                  </p>
-                </div>
-                <span className="text-[10px] uppercase tracking-wide text-text-muted">
-                  {Math.max(currentStageIndex + 1, 1)}/{visibleStageMeta.length}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-1.5">
                 {visibleStageMeta.map((stageMeta, index) => {
                   const isActive = builderStage === stageMeta.id;
                   const canVisitStage = isActive
@@ -3082,7 +3005,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, combo
                         setBuilderStage(stageMeta.id);
                       }}
                       disabled={!canVisitStage}
-                      className={`text-left rounded-lg border px-3 py-2 transition-all ${
+                      className={`text-left rounded-lg border px-3 py-2 min-h-11 transition-all ${
                         isActive
                           ? "border-primary bg-primary/8"
                           : canVisitStage
@@ -3102,26 +3025,22 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, combo
                         >
                           {isCompleted && !isActive ? "check_circle" : stageMeta.icon}
                         </span>
-                        <span className="text-[11px] font-semibold text-text-main">
+                        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-text-main">
                           {getI18nOrFallback(t, stageMeta.labelKey, stageMeta.fallbackLabel)}
                         </span>
+                        <span className="text-[10px] uppercase tracking-wide text-text-muted">
+                          {index + 1}/{visibleStageMeta.length}
+                        </span>
                       </div>
-                      <p className="text-[10px] text-text-muted mt-1 leading-[1.45]">
-                        {getI18nOrFallback(
-                          t,
-                          stageMeta.descriptionKey,
-                          stageMeta.fallbackDescription
-                        )}
-                      </p>
-                      <p className="text-[10px] uppercase tracking-wide mt-1 text-text-muted">
-                        {index < currentStageIndex
-                          ? getI18nOrFallback(t, "builderStageVisited", "Visited")
-                          : isActive
-                            ? getI18nOrFallback(t, "builderStageCurrent", "Current")
-                            : canVisitStage
-                              ? getI18nOrFallback(t, "builderStagePending", "Pending")
-                              : getI18nOrFallback(t, "builderStageLocked", "Locked")}
-                      </p>
+                      {isActive && (
+                        <p className="text-[11px] text-text-muted mt-1 leading-[1.45]">
+                          {getI18nOrFallback(
+                            t,
+                            stageMeta.descriptionKey,
+                            stageMeta.fallbackDescription
+                          )}
+                        </p>
+                      )}
                     </button>
                   );
                 })}

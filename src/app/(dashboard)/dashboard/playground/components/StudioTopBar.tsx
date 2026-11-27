@@ -17,6 +17,8 @@ interface StudioTopBarProps {
   metrics: StreamMetrics;
   /** Optional playground state for the Export code modal. If omitted, a minimal state is used. */
   exportState?: PlaygroundState;
+  /** Phone: the one press that opens the sheet with the other tabs and the config. */
+  onOpenSheet?: () => void;
 }
 
 interface TabConfig {
@@ -41,6 +43,7 @@ export default function StudioTopBar({
   onTabChange,
   metrics,
   exportState,
+  onOpenSheet,
 }: StudioTopBarProps) {
   const t = useTranslations("playground");
   const [exportOpen, setExportOpen] = useState(false);
@@ -48,9 +51,30 @@ export default function StudioTopBar({
   return (
     <>
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface shrink-0">
+        {/* Phone: the current tab and one press for the other tabs and the config */}
+        <div className="flex min-w-0 flex-1 items-center gap-2 md:hidden">
+          <span className="truncate text-sm font-semibold text-text-main">
+            {t(TABS.find((tab) => tab.id === activeTab)?.labelKey ?? "tabChat")}
+          </span>
+        </div>
+        {onOpenSheet && (
+          <button
+            type="button"
+            onClick={onOpenSheet}
+            data-testid="playground-sheet-open"
+            className="md:hidden inline-flex size-11 shrink-0 items-center justify-center rounded-control border border-border text-text-muted hover:bg-surface-2 hover:text-text-main"
+            title={t("configPane")}
+            aria-label={t("configPane")}
+          >
+            <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+              tune
+            </span>
+          </button>
+        )}
+
         {/* Tabs */}
         <div
-          className="inline-flex items-center gap-0.5 p-0.5 rounded-control bg-surface-2 border border-border"
+          className="hidden md:inline-flex items-center gap-0.5 p-0.5 rounded-control bg-surface-2 border border-border"
           role="tablist"
         >
           {TABS.map((tab) => (
@@ -74,7 +98,7 @@ export default function StudioTopBar({
         </div>
 
         {/* Right side: token counter + export button */}
-        <div className="flex items-center gap-3">
+        <div className="hidden md:flex items-center gap-3">
           <TokenCostCounter
             tokensIn={metrics.tokensIn}
             tokensOut={metrics.tokensOut}

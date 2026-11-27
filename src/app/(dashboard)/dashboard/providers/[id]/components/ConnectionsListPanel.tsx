@@ -237,6 +237,9 @@ export default function ConnectionsListPanel({
   const pageStart = clampedPage * PAGE_SIZE;
   const pageEnd = pageStart + PAGE_SIZE;
 
+  // Search and the health filter only matter once the list is long, or while one is in use.
+  const showFilters = connections.length > 5 || accountSearch !== "" || healthFilter !== "all";
+
   const accountSearchInput = (
     <div className="relative min-w-[160px] max-w-[220px]">
       <span className="material-symbols-outlined pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[15px] text-text-muted">
@@ -355,8 +358,12 @@ export default function ConnectionsListPanel({
                     )}
               </span>
             </label>
-            {accountSearchInput}
-            {filterPills}
+            {showFilters && (
+              <>
+                {accountSearchInput}
+                {filterPills}
+              </>
+            )}
           </div>
 
           {bulkActions}
@@ -517,8 +524,12 @@ export default function ConnectionsListPanel({
                     )}
               </span>
             </label>
-            {accountSearchInput}
-            {filterPills}
+            {showFilters && (
+              <>
+                {accountSearchInput}
+                {filterPills}
+              </>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
-  SIDEBAR_SECTIONS,
+  ALL_PAGE_SECTIONS,
   HIDDEN_SIDEBAR_ITEMS_SETTING_KEY,
   normalizeHiddenSidebarItems,
   type SidebarItemDefinition,
@@ -94,13 +94,13 @@ function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
 
   const allItems = useMemo<PaletteItem[]>(
     () =>
-      SIDEBAR_SECTIONS.flatMap((section) => {
+      ALL_PAGE_SECTIONS.flatMap((section) => {
         const sectionLabel = safeTranslate(section.titleKey, section.titleFallback);
         return section.children.flatMap<PaletteItem>((child) => {
           if (isSidebarGroup(child)) {
             const subgroupLabel = safeTranslate(child.titleKey, child.titleFallback);
             return child.items
-              .filter((item) => !hiddenItems.has(item.id))
+              .filter((item) => item.parent || !hiddenItems.has(item.id))
               .map<PaletteItem>((item) => ({
                 id: item.id,
                 href: item.href,
@@ -115,7 +115,7 @@ function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
               }));
           }
           const item = child as SidebarItemDefinition;
-          if (hiddenItems.has(item.id)) return [];
+          if (!item.parent && hiddenItems.has(item.id)) return [];
           return [
             {
               id: item.id,
