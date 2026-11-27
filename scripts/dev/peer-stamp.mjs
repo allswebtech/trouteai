@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { isLocalNodeRequest } from "./request-locality.mjs";
+
 /**
  * Trusted peer-IP stamping for the custom Node HTTP servers.
  *
@@ -75,7 +77,11 @@ export function stampPeerIp(req) {
       // loopback socket is the proxy hop, not the end-user, so it must not be
       // trusted as local. Token-prefix the marker so a remote caller cannot
       // forge it (or its absence) on a non-proxied request.
-      const viaProxy = !!(req.headers["x-forwarded-for"] || req.headers["x-real-ip"]);
+      // The marker also covers a Host header that is not this computer's loopback (or is the
+      // public base host): a tunnel on this computer passes the visitor's Host on, whatever
+      // headers it adds. One decision for it all: request-locality.mjs.
+      // The socket part of the decision is the stamped peer above (loopback or LAN tier).
+      const viaProxy = !isLocalNodeRequest(req, { socket: false });
       req.headers[VIA_PROXY_HEADER] = `${token}|${viaProxy ? "1" : "0"}`;
     }
   } catch {
