@@ -485,11 +485,11 @@ export default function CachePage() {
         />
       )}
 
-      {!loading && stats && activeView === "prompt" && !(pc && pc.totalRequests > 0) && (
+      {!loading && stats && activeView === "prompt" && !(pc && (pc.requestsWithCacheControl > 0 || pc.totalCachedTokens > 0)) && (
         <p className="py-6 text-center text-sm text-text-muted">{tu("noCacheYet")}</p>
       )}
 
-      {!loading && stats && activeView === "prompt" && pc && pc.totalRequests > 0 && (
+      {!loading && stats && activeView === "prompt" && pc && (pc.requestsWithCacheControl > 0 || pc.totalCachedTokens > 0) && (
         <Card>
           <div className="flex flex-col gap-6 p-5 md:p-6">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">

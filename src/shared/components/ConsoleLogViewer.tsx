@@ -308,7 +308,7 @@ export default function ConsoleLogViewer() {
                   <button
                     onClick={() => handleCopy(entry, idx)}
                     title={tv("copyLogEntry")}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-zinc-400 hover:text-white"
+                    className="hidden opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-zinc-400 hover:text-white sm:block"
                   >
                     <span className="material-symbols-outlined text-[14px]">
                       {copiedIdx === idx ? "check" : "content_copy"}
