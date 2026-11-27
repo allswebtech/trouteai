@@ -29,12 +29,13 @@ export default function AutoComboCatalog() {
             <span className="material-symbols-outlined text-xl text-primary-text">
               auto_awesome
             </span>
-            <h2 className="text-base font-bold text-text-main">{t("autoCatalogTitle")}</h2>
+            <h2 className="text-base font-bold text-text-main">
+              {t.has("readyMadeCombos") ? t("readyMadeCombos") : "Ready-made combos"}
+            </h2>
             <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary-text">
               {t("autoCatalogTemplateCount", { count: AUTO_COMBO_TEMPLATES.length })}
             </span>
           </div>
-          <p className="mt-1 text-xs text-text-muted">{t("autoCatalogDescription")}</p>
         </div>
         <span className="material-symbols-outlined text-base text-text-muted">
           {open ? "expand_less" : "expand_more"}
