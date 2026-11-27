@@ -835,28 +835,32 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
       sortBy !== "newest",
     ].filter(Boolean).length;
 
+    const recordingButton = (
+      <button
+        onClick={() => setRecording(!recording)}
+        className={`inline-flex h-8 items-center gap-2 rounded-control border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
+          recording
+            ? "border-error/30 bg-error/10 text-error"
+            : "border-border bg-surface text-text-muted hover:bg-surface-2 hover:text-text-main"
+        }`}
+      >
+        <span
+          className={`size-2 rounded-full ${recording ? "bg-error animate-pulse" : "bg-text-muted"}`}
+          aria-hidden="true"
+        />
+        {recording ? t("recording") : t("paused")}
+      </button>
+    );
+
     return (
       <div className="flex flex-col gap-4">
         {/* Toolbar: the controls most people need stay visible */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Recording Toggle */}
-          <button
-            onClick={() => setRecording(!recording)}
-            className={`inline-flex h-8 items-center gap-2 rounded-control border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
-              recording
-                ? "border-error/30 bg-error/10 text-error"
-                : "border-border bg-surface text-text-muted hover:bg-surface-2 hover:text-text-main"
-            }`}
-          >
-            <span
-              className={`size-2 rounded-full ${recording ? "bg-error animate-pulse" : "bg-text-muted"}`}
-              aria-hidden="true"
-            />
-            {recording ? t("recording") : t("paused")}
-          </button>
+          {/* Recording: shown here only while paused, otherwise inside Filters */}
+          {!recording && !showFilters ? recordingButton : null}
 
           {/* Search */}
-          <div className="relative min-w-[200px] flex-1">
+          <div className="relative min-w-[200px] basis-full flex-1 sm:basis-0">
             <span
               className="material-symbols-outlined pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-[18px] text-text-muted"
               aria-hidden="true"
@@ -926,7 +930,9 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
           </button>
 
           {/* Column visibility */}
-          <ColumnToggle columns={columns} visible={visibleColumns} onToggle={toggleColumn} />
+          <div className="hidden sm:block">
+            <ColumnToggle columns={columns} visible={visibleColumns} onToggle={toggleColumn} />
+          </div>
 
           {/* Refresh */}
           <button
@@ -945,6 +951,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
         {showFilters && (
           <div className="flex flex-col gap-3 rounded-card border border-border bg-surface p-3">
             <div className="flex flex-wrap items-center gap-2">
+              {recordingButton}
               {/* Provider Dropdown */}
               <select
                 value={selectedProvider}
@@ -1232,28 +1239,28 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                       </th>
                     )}
                     {visibleColumns.cacheSource && (
-                      <th className={LOG_TABLE_HEADER_CELL_CLASS}>{t("columns.cacheSource")}</th>
+                      <th className={`${LOG_TABLE_HEADER_CELL_CLASS} hidden sm:table-cell`}>{t("columns.cacheSource")}</th>
                     )}
                     {visibleColumns.model && (
                       <th className={LOG_TABLE_HEADER_CELL_CLASS}>{t("columns.model")}</th>
                     )}
                     {visibleColumns.requestedModel && (
-                      <th className={LOG_TABLE_HEADER_CELL_CLASS}>{t("columns.requested")}</th>
+                      <th className={`${LOG_TABLE_HEADER_CELL_CLASS} hidden sm:table-cell`}>{t("columns.requested")}</th>
                     )}
                     {visibleColumns.provider && (
-                      <th className={LOG_TABLE_HEADER_CELL_CLASS}>{t("columns.provider")}</th>
+                      <th className={`${LOG_TABLE_HEADER_CELL_CLASS} hidden sm:table-cell`}>{t("columns.provider")}</th>
                     )}
                     {visibleColumns.protocol && (
-                      <th className={LOG_TABLE_HEADER_CELL_CLASS}>{t("columns.protocol")}</th>
+                      <th className={`${LOG_TABLE_HEADER_CELL_CLASS} hidden sm:table-cell`}>{t("columns.protocol")}</th>
                     )}
                     {visibleColumns.account && (
-                      <th className={LOG_TABLE_HEADER_CELL_CLASS}>{t("columns.account")}</th>
+                      <th className={`${LOG_TABLE_HEADER_CELL_CLASS} hidden sm:table-cell`}>{t("columns.account")}</th>
                     )}
                     {visibleColumns.apiKey && (
-                      <th className={LOG_TABLE_HEADER_CELL_CLASS}>{t("columns.apiKey")}</th>
+                      <th className={`${LOG_TABLE_HEADER_CELL_CLASS} hidden sm:table-cell`}>{t("columns.apiKey")}</th>
                     )}
                     {visibleColumns.combo && (
-                      <th className={LOG_TABLE_HEADER_CELL_CLASS}>{t("columns.combo")}</th>
+                      <th className={`${LOG_TABLE_HEADER_CELL_CLASS} hidden sm:table-cell`}>{t("columns.combo")}</th>
                     )}
                     {visibleColumns.tokens && (
                       <th
@@ -1266,7 +1273,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                     )}
                     {visibleColumns.tps && (
                       <th
-                        className={`${LOG_TABLE_HEADER_CELL_RIGHT_CLASS} cursor-pointer select-none`}
+                        className={`${LOG_TABLE_HEADER_CELL_RIGHT_CLASS} cursor-pointer select-none hidden sm:table-cell`}
                         onClick={() => toggleSort("tps")}
                       >
                         {t("columns.tps")}
@@ -1275,7 +1282,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                     )}
                     {visibleColumns.duration && (
                       <th
-                        className={`${LOG_TABLE_HEADER_CELL_RIGHT_CLASS} cursor-pointer select-none`}
+                        className={`${LOG_TABLE_HEADER_CELL_RIGHT_CLASS} cursor-pointer select-none hidden sm:table-cell`}
                         onClick={() => toggleSort("duration")}
                       >
                         {t("columns.duration")}
@@ -1336,7 +1343,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                         }
                       >
                         {visibleColumns.status && (
-                          <td className="px-3 py-2">
+                          <td className="px-2 py-2 sm:px-3">
                             {isActive ? (
                               <span
                                 className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-warning/15 border border-warning/25"
@@ -1382,7 +1389,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                           </td>
                         )}
                         {visibleColumns.cacheSource && (
-                          <td className="px-3 py-2">
+                          <td className="hidden sm:table-cell px-2 py-2 sm:px-3">
                             {isActive ? (
                               <span className="text-text-muted text-[10px]">—</span>
                             ) : (
@@ -1398,7 +1405,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                           </td>
                         )}
                         {visibleColumns.model && (
-                          <td className="px-3 py-2 font-medium text-text-main font-mono text-[11px]">
+                          <td className="px-2 py-2 sm:px-3 max-w-[9rem] truncate font-medium text-text-main font-mono text-[11px] sm:max-w-none">
                             <div className="flex items-center gap-1.5">
                               <span>{log.model}</span>
                               {log.groupStatus === "healed" && !log.isRetry && (
@@ -1453,7 +1460,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                           </td>
                         )}
                         {visibleColumns.requestedModel && (
-                          <td className="px-3 py-2 font-mono text-[11px]">
+                          <td className="hidden sm:table-cell px-2 py-2 sm:px-3 font-mono text-[11px]">
                             {log.requestedModel ? (
                               <span
                                 className={
@@ -1478,7 +1485,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                           </td>
                         )}
                         {visibleColumns.provider && (
-                          <td className="px-3 py-2">
+                          <td className="hidden sm:table-cell px-2 py-2 sm:px-3">
                             <span
                               className="inline-block max-w-[160px] truncate rounded-control border border-border bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-text-main"
                               title={providerLabel}
@@ -1488,7 +1495,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                           </td>
                         )}
                         {visibleColumns.protocol && (
-                          <td className="px-3 py-2">
+                          <td className="hidden sm:table-cell px-2 py-2 sm:px-3">
                             {isActive ? (
                               <span className="text-text-muted text-[10px]">—</span>
                             ) : (
@@ -1500,7 +1507,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                         )}
                         {visibleColumns.account && (
                           <td
-                            className="px-3 py-2 text-text-muted truncate max-w-[120px]"
+                            className="hidden sm:table-cell px-2 py-2 sm:px-3 text-text-muted truncate max-w-[120px]"
                             title={accountLabel}
                           >
                             {accountLabel}
@@ -1508,7 +1515,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                         )}
                         {visibleColumns.apiKey && (
                           <td
-                            className="px-3 py-2 text-text-muted truncate max-w-[140px]"
+                            className="hidden sm:table-cell px-2 py-2 sm:px-3 text-text-muted truncate max-w-[140px]"
                             title={log.apiKeyName || log.apiKeyId || t("noApiKey")}
                           >
                             {isActive ? (
@@ -1519,7 +1526,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                           </td>
                         )}
                         {visibleColumns.combo && (
-                          <td className="px-3 py-2">
+                          <td className="hidden sm:table-cell px-2 py-2 sm:px-3">
                             {isActive ? (
                               <span className="text-text-muted text-[10px]">—</span>
                             ) : log.comboName ? (
@@ -1535,11 +1542,17 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                           </td>
                         )}
                         {visibleColumns.tokens && (
-                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                          <td className="px-2 py-2 sm:px-3 text-right whitespace-nowrap">
                             {isActive ? (
                               <span className="text-text-muted text-[10px]">—</span>
                             ) : (
                               <>
+                                <span className="sm:hidden text-text-main">
+                                  {(
+                                    (log.tokens?.in || 0) + (log.tokens?.out || 0)
+                                  ).toLocaleString()}
+                                </span>
+                                <span className="hidden sm:inline">
                                 <span className="text-text-muted">TI:</span>{" "}
                                 <span className="text-text-main">
                                   {log.tokens?.in?.toLocaleString() || 0}
@@ -1560,12 +1573,13 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                                     </span>
                                   </>
                                 )}
+                                </span>
                               </>
                             )}
                           </td>
                         )}
                         {visibleColumns.tps && (
-                          <td className="px-3 py-2 text-right whitespace-nowrap font-mono">
+                          <td className="hidden sm:table-cell px-2 py-2 sm:px-3 text-right whitespace-nowrap font-mono">
                             {isActive ? (
                               <span className="text-text-muted text-[10px]">—</span>
                             ) : (
@@ -1582,12 +1596,12 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                           </td>
                         )}
                         {visibleColumns.duration && (
-                          <td className="px-3 py-2 text-right text-text-main tabular-nums">
+                          <td className="hidden sm:table-cell px-2 py-2 sm:px-3 text-right text-text-main tabular-nums">
                             {formatDuration(log.duration)}
                           </td>
                         )}
                         {visibleColumns.time && (
-                          <td className="px-3 py-2 text-right text-text-muted">
+                          <td className="px-2 py-2 sm:px-3 text-right text-text-muted">
                             {formatTime(log.timestamp)}
                           </td>
                         )}

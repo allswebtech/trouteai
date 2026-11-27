@@ -2,7 +2,7 @@ export const LOG_TABLE_CLASS = "w-full text-left border-collapse text-xs tabular
 export const LOG_TABLE_HEAD_CLASS = "sticky top-0 z-10";
 export const LOG_TABLE_ROW_CLASS = "border-b border-border";
 export const LOG_TABLE_HEADER_CELL_CLASS =
-  "h-9 px-3 py-2 font-medium text-text-muted text-xs border-b border-border";
+  "h-9 px-2 py-2 sm:px-3 font-medium text-text-muted text-xs border-b border-border";
 export const LOG_TABLE_HEADER_CELL_RIGHT_CLASS = `${LOG_TABLE_HEADER_CELL_CLASS} text-right`;
 export const LOG_TABLE_HEADER_BG_STYLE = { backgroundColor: "var(--color-surface, #fff)" } as const;
 

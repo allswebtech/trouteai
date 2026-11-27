@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
 import type { AuditLogEntry } from "@/lib/compliance/index";
+import { UsageMoreFor } from "@/shared/components/UsageTabs";
 import ActivityFeed from "./components/ActivityFeed";
 import EventTypeFilter, { type EventCategory, matchesCategory } from "./components/EventTypeFilter";
 
@@ -26,7 +27,7 @@ export default function ActivityFeedClient() {
       });
       const res = await fetch(`/api/compliance/audit-log?${params.toString()}`);
       if (!res.ok) {
-        throw new Error(t("description"));
+        throw new Error(t("fetchFailed"));
       }
       const data = (await res.json()) as AuditLogEntry[];
       // Reset reference time on fresh load so relative timestamps are stable
@@ -56,10 +57,7 @@ export default function ActivityFeedClient() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight text-text-main">{t("title")}</h1>
-          <p className="text-sm text-text-muted mt-1">{t("description")}</p>
-        </div>
+        <h1 className="min-w-0 text-xl font-semibold tracking-tight text-text-main">{t("title")}</h1>
         <button
           type="button"
           onClick={() => fetchEntries()}
@@ -117,6 +115,8 @@ export default function ActivityFeedClient() {
           <ActivityFeed entries={filtered} referenceNowMs={referenceNowMs.current} />
         )}
       </div>
+
+      <UsageMoreFor tab="activity" />
     </div>
   );
 }

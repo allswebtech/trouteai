@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { copyToClipboard } from "@/shared/utils/clipboard";
 import RequestLoggerDetail from "@/shared/components/RequestLoggerDetail";
 
@@ -31,7 +32,6 @@ const VISIBLE_WINDOW_MS = 5 * 60 * 1000;
 const BAR_HEIGHT = 28;
 const LANE_GAP = 4;
 const LANE_HEIGHT = BAR_HEIGHT + LANE_GAP;
-const HEADER_HEIGHT = 48;
 const AXIS_HEIGHT = 32;
 const MIN_BAR_WIDTH = 3;
 const POLL_INTERVAL_MS = 2000;
@@ -150,7 +150,9 @@ export default function RequestTimeline({
   initialSelectedId?: string | null;
 } = {}) {
   const router = useRouter();
+  const tu = useTranslations("usageTabs");
   const [logs, setLogs] = useState<TimelineLog[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [mode, setMode] = useState<ViewMode>("follow");
   const [zoom, setZoom] = useState(1);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -180,7 +182,9 @@ export default function RequestTimeline({
     fetch("/api/usage/call-logs?limit=200")
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
-        if (!cancelled) setLogs(data);
+        if (cancelled) return;
+        setLogs(data);
+        setLoaded(true);
       })
       .catch(() => {});
     const id = setInterval(() => {
@@ -549,20 +553,21 @@ export default function RequestTimeline({
 
   const hoveredLog = hoveredId ? logs.find((l) => l.id === hoveredId) : null;
 
+  if (loaded && logs.length === 0) {
+    return <p className="py-6 text-center text-sm text-text-muted">{tu("noRequestsYet")}</p>;
+  }
+
   return (
     <div className="flex flex-col h-full min-h-0 select-none">
       {/* Header */}
-      <div
-        className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0"
-        style={{ height: HEADER_HEIGHT }}
-      >
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2 border-b border-border shrink-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3">
           <h2 className="text-sm font-semibold text-text-main">Request Timeline</h2>
           <span className="text-xs text-text-muted tabular-nums">
             {visibleLogs.length} visible / {logs.length} total
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Mode selector */}
           <div className="inline-flex items-center gap-0.5 rounded-control border border-border bg-surface-2 p-0.5">
             {(["follow", "live", "pan"] as ViewMode[]).map((m) => (
@@ -798,7 +803,7 @@ export default function RequestTimeline({
       )}
 
       {/* Legend */}
-      <div className="flex items-center gap-3 px-4 py-1.5 border-t border-border text-[10px] shrink-0">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 border-t border-border text-[10px] shrink-0">
         <div className="flex items-center gap-1">
           <div
             className="w-2.5 h-2.5 rounded-sm"
@@ -834,7 +839,7 @@ export default function RequestTimeline({
           />
           <span className="text-text-muted">Other</span>
         </div>
-        <div className="ml-4 flex items-center gap-1.5 text-text-muted">
+        <div className="flex items-center gap-1.5 text-text-muted sm:ml-4">
           <div className="w-3 border-t border-dashed border-border" />
           <span>10min</span>
           <div className="w-3 border-t border-border ml-2" />
@@ -842,7 +847,7 @@ export default function RequestTimeline({
           <div className="w-3 border-t-2 border-primary/50 ml-2" />
           <span>day</span>
         </div>
-        <div className="ml-auto text-text-muted" title={MODE_META[mode].description}>
+        <div className="text-text-muted sm:ml-auto" title={MODE_META[mode].description}>
           {MODE_META[mode].description}
         </div>
       </div>

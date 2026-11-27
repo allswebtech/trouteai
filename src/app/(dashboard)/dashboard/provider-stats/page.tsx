@@ -476,9 +476,7 @@ export default function ProviderStatsPage() {
                       {formatLatency(m.avgLatency ?? m.avgTotalMs ?? null)}
                     </td>
                     <td className="py-2 px-3 text-right tabular-nums text-text-main">
-                      {typeof m.successRate === "number"
-                        ? `${(m.successRate * 100).toFixed(1)}%`
-                        : "—"}
+                      {typeof m.successRate === "number" ? `${m.successRate.toFixed(1)}%` : "—"}
                     </td>
                   </tr>
                 ))}

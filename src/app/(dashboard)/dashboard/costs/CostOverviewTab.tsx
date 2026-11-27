@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { useProviderNodeMap, resolveProviderName } from "@/lib/display/useProviderNodeMap";
 import { Card, EmptyState, SegmentedControl, CardSkeleton } from "@/shared/components";
+import UsageTabs, { UsageMoreFor } from "@/shared/components/UsageTabs";
 import {
   getServiceTierDisplayLabel,
   type TranslationFn as CostTranslationFn,
@@ -295,6 +296,7 @@ function downloadFile(content: string, filename: string, mimeType: string) {
 
 export default function CostOverviewTab() {
   const t = useTranslations("costs");
+  const tu = useTranslations("usageTabs");
   const locale = useLocale();
   const nodeMap = useProviderNodeMap();
   const searchParams = useSearchParams();
@@ -467,77 +469,75 @@ export default function CostOverviewTab() {
 
   if (error && !analytics) {
     return (
-      <Card className="p-6">
-        <EmptyState icon="payments" title={t("overviewTitle")} description={error} />
-      </Card>
+      <div className="flex flex-col gap-4">
+        <UsageTabs active="costs" />
+        <Card className="p-6">
+          <EmptyState icon="payments" title={t("overviewTitle")} description={error} />
+        </Card>
+      </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-6">
-      <Card className="p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h2 className="text-xl font-semibold tracking-tight text-text-main">
-              {t("overviewTitle")}
-            </h2>
-            <p className="text-sm text-text-muted mt-1">{t("overviewDescription")}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            {summary.streak > 0 && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-2 border border-border">
-                <span className="material-symbols-outlined text-text-muted text-sm">
-                  local_fire_department
-                </span>
-                <span className="text-sm font-semibold text-text-main tabular-nums">
-                  {summary.streak}
-                </span>
-                <span className="text-xs text-text-muted">{t("dayStreak")}</span>
-              </div>
-            )}
-            {analytics && summary.totalCost > 0 && (
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => {
-                    const csv = generateCSV(analytics, locale);
-                    const dateStr = new Date().toISOString().slice(0, 10);
-                    downloadFile(csv, `trouteai-costs-${range}-${dateStr}.csv`, "text/csv");
-                  }}
-                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-text-muted hover:text-text-main hover:bg-surface-2 rounded-control border border-border transition-colors"
-                  title={t("exportCSV")}
-                >
-                  <span className="material-symbols-outlined text-sm">download</span>
-                  CSV
-                </button>
-                <button
-                  onClick={() => {
-                    const json = generateJSON(analytics);
-                    const dateStr = new Date().toISOString().slice(0, 10);
-                    downloadFile(
-                      json,
-                      `trouteai-costs-${range}-${dateStr}.json`,
-                      "application/json"
-                    );
-                  }}
-                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-text-muted hover:text-text-main hover:bg-surface-2 rounded-control border border-border transition-colors"
-                  title={t("exportJSON")}
-                >
-                  <span className="material-symbols-outlined text-sm">download</span>
-                  JSON
-                </button>
-              </div>
-            )}
-            <SegmentedControl
-              options={RANGE_OPTIONS.map((option) => ({
-                value: option.value,
-                label: t(option.labelKey),
-              }))}
-              value={range}
-              onChange={(value) => setRange(value as CostRange)}
-            />
-          </div>
+      <UsageTabs active="costs" />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <select
+          aria-label={tu("range")}
+          value={range}
+          onChange={(e) => setRange(e.target.value as CostRange)}
+          className="h-11 min-w-0 flex-1 rounded-control border border-border bg-surface px-3 text-sm text-text-main focus:border-primary focus:outline-none sm:hidden"
+        >
+          {RANGE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {t(option.labelKey)}
+            </option>
+          ))}
+        </select>
+        <div className="hidden sm:block">
+          <SegmentedControl
+            options={RANGE_OPTIONS.map((option) => ({
+              value: option.value,
+              label: t(option.labelKey),
+            }))}
+            value={range}
+            onChange={(value) => setRange(value as CostRange)}
+          />
         </div>
-      </Card>
+        {analytics && summary.totalCost > 0 && (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => {
+                const csv = generateCSV(analytics, locale);
+                const dateStr = new Date().toISOString().slice(0, 10);
+                downloadFile(csv, `trouteai-costs-${range}-${dateStr}.csv`, "text/csv");
+              }}
+              className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-text-muted hover:text-text-main hover:bg-surface-2 rounded-control border border-border transition-colors"
+              title={t("exportCSV")}
+            >
+              <span className="material-symbols-outlined text-sm">download</span>
+              CSV
+            </button>
+            <button
+              onClick={() => {
+                const json = generateJSON(analytics);
+                const dateStr = new Date().toISOString().slice(0, 10);
+                downloadFile(
+                  json,
+                  `trouteai-costs-${range}-${dateStr}.json`,
+                  "application/json"
+                );
+              }}
+              className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-text-muted hover:text-text-main hover:bg-surface-2 rounded-control border border-border transition-colors"
+              title={t("exportJSON")}
+            >
+              <span className="material-symbols-outlined text-sm">download</span>
+              JSON
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <MetricCard
@@ -892,6 +892,8 @@ export default function CostOverviewTab() {
           )}
         </>
       )}
+
+      <UsageMoreFor tab="costs" />
     </div>
   );
 }
