@@ -1789,7 +1789,7 @@ function ComboCardInner({
             type="button"
             onClick={() => setActionsOpen((v) => !v)}
             aria-expanded={actionsOpen}
-            aria-label={getI18nOrFallback(t, "moreActions", "More")}
+            aria-label={getI18nOrFallback(t, "moreActions", "More actions")}
             data-testid={`combo-more-${combo.id}`}
             className="md:hidden inline-flex size-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface-2 hover:text-primary-text transition-colors"
           >
@@ -1899,24 +1899,24 @@ function ComboCardInner({
                 type="button"
                 onClick={item.run}
                 disabled={item.disabled}
-                className={`inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm transition-colors hover:bg-surface-2 ${
+                className={`inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm transition-colors hover:bg-surface-2 ${
                   item.danger ? "text-error" : "text-text-main"
                 }`}
               >
                 <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
                   {item.icon}
                 </span>
-                <span className="truncate">{item.label}</span>
+                <span className="min-w-0 break-words text-left leading-tight">{item.label}</span>
               </button>
             ))}
             <Link
               href={`/dashboard/combos/${combo.id}`}
-              className="col-span-2 inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
+              className="col-span-2 inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
             >
               <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
                 monitoring
               </span>
-              <span className="truncate">
+              <span className="min-w-0 break-words text-left leading-tight">
                 {getI18nOrFallback(t, "controlCenter", "Control Center")}
               </span>
             </Link>

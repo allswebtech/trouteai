@@ -1263,7 +1263,7 @@ export default function ApiManagerPageClient() {
                       type="button"
                       onClick={() => setOpenKeyActionsId(actionsOpen ? null : key.id)}
                       aria-expanded={actionsOpen}
-                      aria-label={tr("moreActions", "More")}
+                      aria-label={tr("moreActions", "More actions")}
                       data-testid={`key-more-${key.id}`}
                       className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-surface-2 hover:text-primary-text"
                     >
@@ -1290,7 +1290,7 @@ export default function ApiManagerPageClient() {
                           <button
                             type="button"
                             onClick={() => handleToggleKeyVisibility(key.id)}
-                            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
+                            className="inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
                           >
                             <span className="material-symbols-outlined text-[18px]">
                               {revealed ? "visibility_off" : "visibility"}
@@ -1300,34 +1300,40 @@ export default function ApiManagerPageClient() {
                         )}
                         <a
                           href={`/dashboard/costs?range=all&apiKeyIds=${encodeURIComponent(key.id)}&groupBy=model`}
-                          className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
+                          className="inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
                         >
                           <span className="material-symbols-outlined text-[18px]">payments</span>
-                          <span className="truncate">{`View costs for ${key.name}`}</span>
+                          <span className="min-w-0 break-words text-left leading-tight">{`View costs for ${key.name}`}</span>
                         </a>
                         <button
                           type="button"
                           onClick={() => handleRegenerateKey(key.id)}
-                          className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
+                          className="inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
                         >
                           <span className="material-symbols-outlined text-[18px]">refresh</span>
-                          <span className="truncate">{t("regenerateKey")}</span>
+                          <span className="min-w-0 break-words text-left leading-tight">
+                            {t("regenerateKey")}
+                          </span>
                         </button>
                         <button
                           type="button"
                           onClick={() => handleOpenPermissions(key)}
-                          className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
+                          className="inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-text-main hover:bg-surface-2"
                         >
                           <span className="material-symbols-outlined text-[18px]">tune</span>
-                          <span className="truncate">{t("editPermissions")}</span>
+                          <span className="min-w-0 break-words text-left leading-tight">
+                            {t("editPermissions")}
+                          </span>
                         </button>
                         <button
                           type="button"
                           onClick={() => handleDeleteKey(key.id)}
-                          className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-error hover:bg-error/10"
+                          className="inline-flex min-h-11 items-center gap-2 py-1.5 rounded-lg border border-border px-3 text-sm text-error hover:bg-error/10"
                         >
                           <span className="material-symbols-outlined text-[18px]">delete</span>
-                          <span className="truncate">{t("deleteKey")}</span>
+                          <span className="min-w-0 break-words text-left leading-tight">
+                            {t("deleteKey")}
+                          </span>
                         </button>
                       </div>
                     </div>
@@ -1459,17 +1465,19 @@ export default function ApiManagerPageClient() {
                 {normalKeys.length > 0 && (
                   <div>
                     {/* Normal keys section heading */}
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="material-symbols-outlined text-base text-text-muted">
-                        vpn_key
-                      </span>
-                      <span className="text-sm font-medium text-text-main">
-                        {t("normalKeysSection")}
-                      </span>
-                      <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-surface/80 border border-border text-[11px] font-semibold text-text-muted">
-                        {normalKeys.length}
-                      </span>
-                    </div>
+                    {quotaKeys.length > 0 && (
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="material-symbols-outlined text-base text-text-muted">
+                          vpn_key
+                        </span>
+                        <span className="text-sm font-medium text-text-main">
+                          {t("normalKeysSection")}
+                        </span>
+                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-surface/80 border border-border text-[11px] font-semibold text-text-muted">
+                          {normalKeys.length}
+                        </span>
+                      </div>
+                    )}
                     <div className="border border-border rounded-lg overflow-hidden">
                       <div className="overflow-x-auto">
                         {tableHeader}
