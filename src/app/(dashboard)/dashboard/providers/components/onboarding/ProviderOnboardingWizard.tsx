@@ -393,32 +393,43 @@ function ResultSummary({
           </div>
         )}
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          {valid ? (
+            <Link
+              href="/home"
+              className="inline-flex min-h-11 items-center justify-center rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary transition-colors hover:bg-primary/90"
+            >
+              {providerText(t, "onboardingConnectTool", "Connect a coding tool")}
+            </Link>
+          ) : (
+            <Link
+              href="/dashboard/providers"
+              className="inline-flex min-h-11 items-center justify-center rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary transition-colors hover:bg-primary/90"
+            >
+              {providerText(t, "backToProviders", "Back to providers")}
+            </Link>
+          )}
           {(() => {
             const detailsHref = buildProviderDetailsHref(connection);
             return (
               detailsHref && (
                 <Link
                   href={detailsHref}
-                  className="inline-flex items-center justify-center rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary transition-colors hover:bg-primary/90"
+                  className="inline-flex min-h-11 items-center justify-center px-2 text-sm font-medium text-primary-text hover:underline"
                 >
                   {providerText(t, "onboardingOpenProviderDetails", "Open provider details")}
                 </Link>
               )
             );
           })()}
-          <Link
-            href="/dashboard/providers"
-            className="inline-flex items-center justify-center rounded-lg border border-border bg-bg-subtle px-4 py-2 text-sm font-medium text-text-main transition-colors hover:bg-bg-card"
-          >
-            {providerText(t, "backToProviders", "Back to providers")}
-          </Link>
-          <Link
-            href="/dashboard/playground"
-            className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium text-text-muted transition-colors hover:bg-bg-subtle hover:text-text-main"
-          >
-            {providerText(t, "onboardingTryInPlayground", "Try in playground")}
-          </Link>
+          {valid && (
+            <Link
+              href="/dashboard/providers"
+              className="inline-flex min-h-11 items-center justify-center px-2 text-sm font-medium text-primary-text hover:underline"
+            >
+              {providerText(t, "backToProviders", "Back to providers")}
+            </Link>
+          )}
         </div>
       </div>
     </Card>
@@ -463,6 +474,7 @@ export default function ProviderOnboardingWizard() {
     splitPopularProviderOptions(filteredOptions);
   // Group headings only for the full list; search results stay one flat list.
   const showProviderGroups = !query.trim() && popularOptions.length > 0 && otherOptions.length > 0;
+  const stepNumber = step === "type" ? 1 : step === "provider" ? 2 : step === "result" ? 4 : 3;
   const currentStepIndex = ["type", "provider", "credentials", "oauth", "result"].indexOf(step);
   const fieldNeeds = getWizardProviderFieldNeeds(selectedProvider?.id);
 
@@ -724,19 +736,17 @@ export default function ProviderOnboardingWizard() {
           <h1 className="mt-2 text-xl font-semibold tracking-tight text-text-main">
             {text("onboardingAddProviderTitle", "Add a provider")}
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-text-muted">
-            {text(
-              "onboardingIntroSimple",
-              "Connect an AI provider such as OpenAI or Google Gemini in a few simple steps. We test the connection for you at the end."
-            )}
-          </p>
         </div>
         <Button variant="ghost" onClick={() => router.push("/dashboard/providers")}>
           {text("close", "Close")}
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <p className="text-sm font-medium text-text-muted sm:hidden" aria-live="polite">
+        {text("onboardingStepOfFour", `Step ${stepNumber} of 4`, { n: stepNumber })}
+      </p>
+
+      <div className="hidden flex-wrap gap-2 sm:flex">
         <StepPill
           label={text("onboardingStepHowToConnect", "How to connect")}
           active={step === "type"}

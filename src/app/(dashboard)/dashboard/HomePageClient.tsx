@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 
 import { useState, useEffect, useMemo, useCallback, useRef, Suspense } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CardSkeleton, Button, Modal } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
@@ -19,7 +20,9 @@ import { getProviderDisplayLabel } from "@/shared/utils/providerDisplayLabel";
 import { HomeProviderTopologySection } from "./HomeProviderTopologySection";
 import { shouldShowProviderTopologyOnHome } from "./homeAppearance";
 import { ConnectAppCard } from "./home-start/ConnectAppCard";
-import { GetStartedCard } from "./home-start/GetStartedCard";
+import { LinkButton } from "./home-start/LinkButton";
+import { countNeedsAttention, pickHomeModel } from "./home-start/homeConnect";
+import { useHomeTr } from "./home-start/useHomeTr";
 import { EMPTY_SETUP_STATUS, fetchHomeSetupStatus } from "./home-start/setupStatus";
 
 const ProviderQuotaWidget = dynamic(() => import("../home/ProviderQuotaWidget"), { ssr: false });
@@ -75,13 +78,13 @@ function normalizeProviderId(providerId?: string | null): string {
   return AI_PROVIDERS[normalized] ? normalized : PROVIDER_ALIAS_TO_ID.get(normalized) || normalized;
 }
 
-// The "Get started" checklist and "Connect your app" card live in ./home-start/ — this
-// file is size-frozen.
+// The "Connect a coding tool" card lives in ./home-start/ — this file is size-frozen.
 
 export default function HomePageClient({ machineId }: HomePageClientProps) {
   const router = useRouter();
   const t = useTranslations("home");
   const tp = useTranslations("providers");
+  const { tr } = useHomeTr();
   const [providerConnections, setProviderConnections] = useState([]);
   const [models, setModels] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -102,7 +105,6 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
 
   // Appearance settings for home page pinning
   const [pinProviderQuotaToHome, setPinProviderQuotaToHome] = useState(false);
-  const [showQuickStartOnHome, setShowQuickStartOnHome] = useState(true); // default on
   // Default hidden until appearance settings load, so the live-WS
   // topology connection is never opened before we know the user wants it.
   const [showProviderTopologyOnHome, setShowProviderTopologyOnHome] = useState(false);
@@ -119,15 +121,8 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
           if (typeof data.pinProviderQuotaToHome === "boolean") {
             setPinProviderQuotaToHome(data.pinProviderQuotaToHome);
           }
-          if (typeof data.showQuickStartOnHome === "boolean") {
-            setShowQuickStartOnHome(data.showQuickStartOnHome);
-          }
-          // Regression fix: the topology card defaults ON (matches the
-          // AppearanceTab toggle's `!== false`). Honoring only an explicit boolean
-          // left the card hidden whenever the setting was never persisted
-          // (undefined), silently removing it for most installs. The live-WS
-          // connection is still gated by `appearanceSettingsLoaded` in the data
-          // effect, so it is never opened before settings load.
+          // The provider map is off unless the Appearance switch is on (same rule as the
+          // switch). The live-WS connection is still gated by `appearanceSettingsLoaded`.
           setShowProviderTopologyOnHome(
             shouldShowProviderTopologyOnHome(data.showProviderTopologyOnHome)
           );
@@ -424,6 +419,26 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
     );
   }
 
+  // Home before any account: one title and one button.
+  if (providerConnections.length === 0) {
+    return (
+      <div className="flex flex-col items-start gap-4">
+        <h1 className="text-xl font-semibold tracking-tight text-text-main">
+          {tr("addFirstAccountTitle", "Add your first AI account")}
+        </h1>
+        <LinkButton href="/dashboard/providers/new" variant="primary" size="lg">
+          {tr("addAccount", "Add account")}
+        </LinkButton>
+      </div>
+    );
+  }
+
+  const aliases: Record<string, string | undefined> = Object.fromEntries(
+    Object.entries(AI_PROVIDERS).map(([id, info]) => [id, info.alias])
+  );
+  const model = pickHomeModel(setupStatus.comboName, providerConnections, models, aliases);
+  const needsAttention = countNeedsAttention(providerConnections);
+
   return (
     <div className="flex flex-col gap-6">
       {pinProviderQuotaToHome && (
@@ -434,16 +449,34 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
         </Suspense>
       )}
 
-      {/* Get started checklist (Appearance setting "showQuickStartOnHome", default on) */}
-      {showQuickStartOnHome && (
-        <GetStartedCard
-          providerCount={providerConnections.length}
-          comboCount={setupStatus.comboCount}
-          keyCount={setupStatus.keyCount}
-        />
-      )}
+      <ConnectAppCard
+        apiBaseUrl={`${displayBaseUrl}/v1`}
+        model={model}
+        keyCount={setupStatus.keyCount}
+        onKeyMade={fetchData}
+      />
 
-      <ConnectAppCard apiBaseUrl={`${displayBaseUrl}/v1`} comboName={setupStatus.comboName} />
+      {needsAttention > 0 && (
+        <Link
+          href="/dashboard/providers"
+          prefetch={false}
+          className="flex min-h-11 items-center gap-3 rounded-card border border-warning/30 bg-warning/10 px-4 py-2 text-sm font-medium text-text-main"
+        >
+          <span className="material-symbols-outlined text-[20px] text-warning" aria-hidden="true">
+            warning
+          </span>
+          <span className="min-w-0 flex-1">
+            {needsAttention === 1
+              ? tr("needsAttentionOne", "1 account needs attention")
+              : tr("needsAttentionMany", `${needsAttention} accounts need attention`, {
+                  n: needsAttention,
+                })}
+          </span>
+          <span className="material-symbols-outlined text-[20px] text-text-muted" aria-hidden="true">
+            chevron_right
+          </span>
+        </Link>
+      )}
 
       {showTopology && (
         <HomeProviderTopologySection
