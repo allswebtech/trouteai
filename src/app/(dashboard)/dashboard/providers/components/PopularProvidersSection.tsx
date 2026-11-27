@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import { Button, Card } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 
+import { providerPageHref } from "../accountsSummary";
 import { POPULAR_PROVIDER_DESCRIPTIONS } from "../featuredProviders";
 
 type ProviderMessageTranslator = ((key: string, values?: Record<string, unknown>) => string) & {
@@ -125,7 +126,7 @@ export default function PopularProvidersSection({ entries }: PopularProvidersSec
                     variant={isConnected ? "secondary" : "primary"}
                     icon={isConnected ? "settings" : "add"}
                     aria-describedby={nameId}
-                    onClick={() => router.push(`/dashboard/providers/${providerId}`)}
+                    onClick={() => router.push(providerPageHref(providerId, Number(stats?.total || 0)))}
                   >
                     {isConnected ? manageLabel : connectLabel}
                   </Button>

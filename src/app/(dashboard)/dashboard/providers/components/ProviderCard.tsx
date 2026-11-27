@@ -15,6 +15,7 @@ import {
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
 
+import { providerPageHref } from "../accountsSummary";
 import { CategoryDot } from "./CategoryDot";
 
 interface ProviderStats {
@@ -279,7 +280,7 @@ const ProviderCard = forwardRef<ProviderCardHandle, ProviderCardProps>(function 
     <div ref={innerRef} id={`provider-${providerId}`} className="flex flex-col h-full">
       <Link
         ref={linkElementRef}
-        href={`/dashboard/providers/${providerId}`}
+        href={providerPageHref(providerId, stats?.total ?? 0)}
         className="group flex-1 flex flex-col focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/60"
         onClick={handleCardClick}
       >

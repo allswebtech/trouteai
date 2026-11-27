@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
-import { Badge, Button, Toggle } from "@/shared/components";
+import { Badge } from "@/shared/components";
 import { pickDisplayValue } from "@/shared/utils/maskEmail";
 import useEmailPrivacyStore from "@/store/emailPrivacyStore";
 import { isClaudeExtraUsageBlockEnabled } from "@/lib/providers/claudeExtraUsage";
@@ -214,7 +214,13 @@ function getStatusPresentation(
     };
   }
 
-  if (effectiveStatus === "active" || effectiveStatus === "success") {
+  // A new account nobody has tested yet is not a failure: the list above counts it as working.
+  if (
+    effectiveStatus === "active" ||
+    effectiveStatus === "success" ||
+    effectiveStatus === "unknown" ||
+    !effectiveStatus
+  ) {
     return {
       statusVariant: "success",
       statusLabel: t("statusConnected"),
@@ -404,6 +410,7 @@ export default function ConnectionRow({
       ? t("exportClaudeAuthFile")
       : "Export auth";
   // Use useState + useEffect for impure Date.now() to avoid calling during render
+  const [menuOpen, setMenuOpen] = useState(false);
   const [isCooldown, setIsCooldown] = useState(false);
   // Token expiry status — lazy init avoids calling Date.now() during render;
   // updates every 30s via interval only (no sync setState in effect body).
@@ -511,52 +518,34 @@ export default function ConnectionRow({
   const codexPlanLabel = getCodexPlanLabel(!!isCodex, connection.providerSpecificData);
   const cliproxyapiDeepMode = !!cliproxyapiEnabled;
 
+  const act =
+    "inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-bg-subtle px-3 text-xs font-medium text-text-main transition-colors hover:bg-surface-2 disabled:opacity-50";
+  const off = "bg-surface-2 text-text-muted hover:text-text-main hover:bg-border";
+  const chip = "inline-flex min-h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium transition-colors";
+  const isActive = connection.isActive ?? true;
+
   return (
     <div
-      className={`group flex items-center justify-between p-3 rounded-lg hover:bg-surface-2 transition-colors ${connection.isActive === false ? "opacity-60" : ""}`}
+      className={`group flex flex-col gap-2 rounded-lg p-3 transition-colors hover:bg-surface-2 ${connection.isActive === false ? "opacity-60" : ""}`}
     >
-      <div className="flex items-center gap-3 flex-1 min-w-0">
+      <div className="flex items-center gap-3">
         {onToggleSelect && (
           <input
             type="checkbox"
             checked={isSelected}
             onChange={onToggleSelect}
-            className="w-4 h-4 shrink-0 rounded border-border text-primary focus:ring-primary/30 cursor-pointer"
+            aria-label={displayName}
+            className="size-4 shrink-0 cursor-pointer rounded border-border text-primary focus:ring-primary/30"
           />
         )}
-        {/* Priority arrows */}
-        <div className="flex flex-col">
-          <button
-            type="button"
-            onClick={onMoveUp}
-            disabled={isFirst}
-            aria-label={tc("moveUp")}
-            title={tc("moveUp")}
-            className={`p-0.5 rounded ${isFirst ? "text-text-muted/50 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
-          >
-            <span className="material-symbols-outlined text-sm" aria-hidden="true">
-              keyboard_arrow_up
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={onMoveDown}
-            disabled={isLast}
-            aria-label={tc("moveDown")}
-            title={tc("moveDown")}
-            className={`p-0.5 rounded ${isLast ? "text-text-muted/50 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
-          >
-            <span className="material-symbols-outlined text-sm" aria-hidden="true">
-              keyboard_arrow_down
-            </span>
-          </button>
-        </div>
-        <span className="material-symbols-outlined text-base text-text-muted">
+        <span className="material-symbols-outlined shrink-0 text-base text-text-muted">
           {isOAuth ? "lock" : "key"}
         </span>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{displayName}</p>
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
+        <div className="min-w-0 flex-1">
+          <p className="break-normal text-sm font-medium [overflow-wrap:normal]" title={displayName}>
+            <span className="block truncate">{displayName}</span>
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
             <Badge variant={statusPresentation.statusVariant as any} size="sm" dot>
               {statusPresentation.statusLabel}
             </Badge>
@@ -565,16 +554,13 @@ export default function ConnectionRow({
                 {codexPlanLabel}
               </Badge>
             )}
-            {/* Token expiry status indicator (state-driven, no Date.now in render) */}
-            {/* The red "Token Expired" badge is TERMINAL-only — for OAuth
-               refresh-capable providers (Antigravity/Gemini) the access token lapses
-               ~hourly but is auto-refreshed, so a lapsed token alone must not paint
-               red. Gate it on testStatus === "expired". */}
+            {/* The red "Token Expired" badge is terminal-only: providers that refresh their own
+               token lapse every hour without being broken, so only testStatus "expired" paints red. */}
             {tokenMinsLeft !== null &&
               (tokenMinsLeft < 0 ? (
                 connection.testStatus === "expired" ? (
                   <span
-                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium bg-error/15 text-error"
+                    className="inline-flex items-center gap-0.5 rounded bg-error/15 px-1.5 py-0.5 text-xs font-medium text-error"
                     title={t("tokenExpiredTitle", { date: effectiveExpiresAt })}
                   >
                     <span className="material-symbols-outlined text-[11px]">error</span>
@@ -583,7 +569,7 @@ export default function ConnectionRow({
                 ) : null
               ) : tokenMinsLeft < 30 ? (
                 <span
-                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium bg-warning/15 text-warning"
+                  className="inline-flex items-center gap-0.5 rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning"
                   title={t("tokenExpiresSoonTitle", { minutes: tokenMinsLeft })}
                 >
                   <span className="material-symbols-outlined text-[11px]">warning</span>
@@ -598,38 +584,118 @@ export default function ConnectionRow({
                 {t(statusPresentation.errorBadge.labelKey)}
               </Badge>
             )}
-            {shouldShowConnectionLastError(connection) && (
-              <span
-                className={`text-xs truncate max-w-[300px] ${statusPresentation.errorTextClass}`}
-                title={connection.lastError}
-              >
-                {connection.lastError}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setMenuOpen((open) => !open)}
+          aria-expanded={menuOpen}
+          aria-label={providerText(t, "accountMoreActions", "More actions")}
+          title={providerText(t, "accountMoreActions", "More actions")}
+          className="flex size-10 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-2 hover:text-text-main"
+        >
+          <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+            more_horiz
+          </span>
+        </button>
+      </div>
+
+      {shouldShowConnectionLastError(connection) && (
+        <p
+          className={`line-clamp-2 text-xs ${statusPresentation.errorTextClass}`}
+          title={connection.lastError}
+        >
+          {connection.lastError}
+        </p>
+      )}
+
+      {menuOpen && (
+        <div className="flex flex-col gap-3 border-t border-border pt-3">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className={act}
+              disabled={connection.isActive === false || isRetesting}
+              onClick={onRetest}
+            >
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                {isRetesting ? "sync" : "play_arrow"}
               </span>
-            )}
+              {providerText(t, "accountTest", "Test")}
+            </button>
+            <button type="button" className={act} onClick={onEdit}>
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                edit
+              </span>
+              {t("edit")}
+            </button>
+            <button type="button" className={act} onClick={() => onToggleActive(!isActive)}>
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                {isActive ? "toggle_off" : "toggle_on"}
+              </span>
+              {isActive
+                ? providerText(t, "accountTurnOff", "Turn off")
+                : providerText(t, "accountTurnOn", "Turn on")}
+            </button>
+            <button
+              type="button"
+              className={`${act} !text-error hover:!bg-error/10`}
+              onClick={onDelete}
+            >
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                delete
+              </span>
+              {providerText(t, "accountRemove", "Remove")}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-text-muted">#{connection.priority}</span>
             {connection.globalPriority && (
               <span className="text-xs text-text-muted">
                 {t("autoPriority", { priority: connection.globalPriority })}
               </span>
             )}
+            <button
+              type="button"
+              onClick={onMoveUp}
+              disabled={isFirst}
+              aria-label={tc("moveUp")}
+              title={tc("moveUp")}
+              className={`${chip} ${off} disabled:opacity-40`}
+            >
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                keyboard_arrow_up
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onMoveDown}
+              disabled={isLast}
+              aria-label={tc("moveDown")}
+              title={tc("moveDown")}
+              className={`${chip} ${off} disabled:opacity-40`}
+            >
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                keyboard_arrow_down
+              </span>
+            </button>
             {connection.maxConcurrent != null && connection.maxConcurrent > 0 && (
               <span
-                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium bg-surface-2 text-text-muted"
+                className="inline-flex items-center gap-0.5 rounded bg-surface-2 px-1.5 py-0.5 text-xs font-medium text-text-muted"
                 title={t("accountConcurrencyCapLabel")}
               >
                 <span className="material-symbols-outlined text-[11px]">dynamic_feed</span>
                 {connection.maxConcurrent}
               </span>
             )}
-            {/* Rate Limit Protection — inline toggle with label */}
-            <span className="text-text-muted/70 select-none">|</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
             <button
+              type="button"
               onClick={() => onToggleRateLimit(!rateLimitEnabled)}
-              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-all cursor-pointer ${
-                rateLimitEnabled
-                  ? "bg-success/15 text-success hover:bg-success/25"
-                  : "bg-surface-2 text-text-muted hover:text-text-main hover:bg-border"
-              }`}
+              className={`${chip} ${rateLimitEnabled ? "bg-success/15 text-success hover:bg-success/25" : off}`}
               title={
                 rateLimitEnabled ? t("disableRateLimitProtection") : t("enableRateLimitProtection")
               }
@@ -644,46 +710,33 @@ export default function ConnectionRow({
               />
             )}
             {isClaude && (
-              <>
-                <span className="text-text-muted/70 select-none">|</span>
-                <button
-                  onClick={() => onToggleClaudeExtraUsage?.(!claudeBlockExtraUsageEnabled)}
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-all cursor-pointer ${
-                    !claudeBlockExtraUsageEnabled
-                      ? "bg-warning/15 text-warning hover:bg-warning/25"
-                      : "bg-surface-2 text-text-muted hover:text-text-main hover:bg-border"
-                  }`}
-                  title={t("claudeExtraUsageToggleTitle")}
-                >
-                  <span className="material-symbols-outlined text-[13px]">payments</span>
-                  {t("claudeExtraUsageShort")}{" "}
-                  {!claudeBlockExtraUsageEnabled ? t("toggleOnShort") : t("toggleOffShort")}
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => onToggleClaudeExtraUsage?.(!claudeBlockExtraUsageEnabled)}
+                className={`${chip} ${!claudeBlockExtraUsageEnabled ? "bg-warning/15 text-warning hover:bg-warning/25" : off}`}
+                title={t("claudeExtraUsageToggleTitle")}
+              >
+                <span className="material-symbols-outlined text-[13px]">payments</span>
+                {t("claudeExtraUsageShort")}{" "}
+                {!claudeBlockExtraUsageEnabled ? t("toggleOnShort") : t("toggleOffShort")}
+              </button>
             )}
             {isCcCompatible && (
-              <>
-                <span className="text-text-muted/70 select-none">|</span>
-                <button
-                  onClick={() => onToggleCliproxyapiMode?.(!cliproxyapiDeepMode)}
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-all cursor-pointer ${
-                    cliproxyapiDeepMode
-                      ? "bg-primary/15 text-primary-text hover:bg-primary/25"
-                      : "bg-surface-2 text-text-muted hover:text-text-main hover:bg-border"
-                  }`}
-                  title={cliproxyapiDeepMode ? t("cpaModeEnabledTitle") : t("cpaModeDisabledTitle")}
-                >
-                  <span className="material-symbols-outlined text-[13px]">swap_horiz</span>
-                  CPA {cliproxyapiDeepMode ? t("toggleOnShort") : t("toggleOffShort")}
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => onToggleCliproxyapiMode?.(!cliproxyapiDeepMode)}
+                className={`${chip} ${cliproxyapiDeepMode ? "bg-primary/15 text-primary-text hover:bg-primary/25" : off}`}
+                title={cliproxyapiDeepMode ? t("cpaModeEnabledTitle") : t("cpaModeDisabledTitle")}
+              >
+                <span className="material-symbols-outlined text-[13px]">swap_horiz</span>
+                CPA {cliproxyapiDeepMode ? t("toggleOnShort") : t("toggleOffShort")}
+              </button>
             )}
             {isCodex && (
               <>
-                <span className="text-text-muted/70 select-none">|</span>
                 {codexServiceTierBadge && (
                   <span
-                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium ${codexServiceTierBadge.className}`}
+                    className={`${chip} ${codexServiceTierBadge.className}`}
                     title={codexServiceTierBadge.title}
                   >
                     <span className="material-symbols-outlined text-[13px]">
@@ -693,24 +746,18 @@ export default function ConnectionRow({
                   </span>
                 )}
                 <button
+                  type="button"
                   onClick={() => onToggleCodex5h?.(!codex5hEnabled)}
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-all cursor-pointer ${
-                    codex5hEnabled
-                      ? "bg-primary/15 text-primary-text hover:bg-primary/25"
-                      : "bg-surface-2 text-text-muted hover:text-text-main hover:bg-border"
-                  }`}
+                  className={`${chip} ${codex5hEnabled ? "bg-primary/15 text-primary-text hover:bg-primary/25" : off}`}
                   title={t("codex5hToggleTitle")}
                 >
                   <span className="material-symbols-outlined text-[13px]">timer</span>
                   5h {codex5hEnabled ? t("toggleOnShort") : t("toggleOffShort")}
                 </button>
                 <button
+                  type="button"
                   onClick={() => onToggleCodexWeekly?.(!codexWeeklyEnabled)}
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-all cursor-pointer ${
-                    codexWeeklyEnabled
-                      ? "bg-primary/15 text-primary-text hover:bg-primary/25"
-                      : "bg-surface-2 text-text-muted hover:text-text-main hover:bg-border"
-                  }`}
+                  className={`${chip} ${codexWeeklyEnabled ? "bg-primary/15 text-primary-text hover:bg-primary/25" : off}`}
                   title={t("codexWeeklyToggleTitle")}
                 >
                   <span className="material-symbols-outlined text-[13px]">date_range</span>
@@ -719,52 +766,32 @@ export default function ConnectionRow({
               </>
             )}
             {onToggleProxyEnabled && (
-              <>
-                <span className="text-text-muted/70 select-none">|</span>
-                <button
-                  onClick={() => onToggleProxyEnabled(!proxyEnabled)}
-                  aria-label={proxyEnabled ? t("proxyEnabledTitle") : t("proxyDisabledTitle")}
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-all cursor-pointer ${
-                    proxyEnabled
-                      ? "bg-success/15 text-success hover:bg-success/25"
-                      : "bg-surface-2 text-text-muted hover:text-text-main hover:bg-border"
-                  }`}
-                  title={proxyEnabled ? t("proxyEnabledTitle") : t("proxyDisabledTitle")}
-                >
-                  <span className="material-symbols-outlined text-[13px]">vpn_lock</span>
-                  {proxyEnabled ? <span className="sr-only">{t("proxyOn")}</span> : t("proxyOff")}
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => onToggleProxyEnabled(!proxyEnabled)}
+                aria-label={proxyEnabled ? t("proxyEnabledTitle") : t("proxyDisabledTitle")}
+                className={`${chip} ${proxyEnabled ? "bg-success/15 text-success hover:bg-success/25" : off}`}
+                title={proxyEnabled ? t("proxyEnabledTitle") : t("proxyDisabledTitle")}
+              >
+                <span className="material-symbols-outlined text-[13px]">vpn_lock</span>
+                {proxyEnabled ? t("proxyOn") : t("proxyOff")}
+              </button>
             )}
             {onTogglePerKeyProxyEnabled && (
-              <>
-                <span className="text-text-muted/70 select-none">|</span>
-                <button
-                  onClick={() => onTogglePerKeyProxyEnabled(!perKeyProxyEnabled)}
-                  aria-label={
-                    perKeyProxyEnabled
-                      ? t("perKeyProxyEnabledTitle")
-                      : t("perKeyProxyDisabledTitle")
-                  }
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-all cursor-pointer ${
-                    perKeyProxyEnabled
-                      ? "bg-primary/15 text-primary-text hover:bg-primary/25"
-                      : "bg-surface-2 text-text-muted hover:text-text-main hover:bg-border"
-                  }`}
-                  title={
-                    perKeyProxyEnabled
-                      ? t("perKeyProxyEnabledTitle")
-                      : t("perKeyProxyDisabledTitle")
-                  }
-                >
-                  <span className="material-symbols-outlined text-[13px]">key</span>
-                  {perKeyProxyEnabled ? (
-                    t("perKeyProxyOn")
-                  ) : (
-                    <span className="sr-only">{t("perKeyProxyOff")}</span>
-                  )}
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => onTogglePerKeyProxyEnabled(!perKeyProxyEnabled)}
+                aria-label={
+                  perKeyProxyEnabled ? t("perKeyProxyEnabledTitle") : t("perKeyProxyDisabledTitle")
+                }
+                className={`${chip} ${perKeyProxyEnabled ? "bg-primary/15 text-primary-text hover:bg-primary/25" : off}`}
+                title={
+                  perKeyProxyEnabled ? t("perKeyProxyEnabledTitle") : t("perKeyProxyDisabledTitle")
+                }
+              >
+                <span className="material-symbols-outlined text-[13px]">key</span>
+                {t("perKeyProxyOn")} {perKeyProxyEnabled ? t("toggleOnShort") : t("toggleOffShort")}
+              </button>
             )}
             {hasProxy &&
               (() => {
@@ -781,147 +808,104 @@ export default function ConnectionRow({
                       ? t("proxySourceProvider")
                       : t("proxySourceKey");
                 return (
-                  <>
-                    <span className="text-text-muted/70 select-none">|</span>
-                    <span
-                      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium ${colorClass}`}
-                      title={t("proxyConfiguredBySource", {
-                        source: label,
-                        host: proxyHost || t("configured"),
-                      })}
-                    >
-                      <span className="material-symbols-outlined text-[13px]">vpn_lock</span>
-                      {proxyName || proxyHost || t("proxy")}
-                    </span>
-                  </>
+                  <span
+                    className={`${chip} ${colorClass}`}
+                    title={t("proxyConfiguredBySource", {
+                      source: label,
+                      host: proxyHost || t("configured"),
+                    })}
+                  >
+                    <span className="material-symbols-outlined text-[13px]">vpn_lock</span>
+                    {proxyName || proxyHost || t("proxy")}
+                  </span>
                 );
               })()}
           </div>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          variant="ghost"
-          icon="refresh"
-          loading={isRetesting}
-          disabled={connection.isActive === false}
-          onClick={onRetest}
-          className="!h-7 !px-2 text-xs"
-          title={t("retestAuthentication")}
-        >
-          {t("retest")}
-        </Button>
-        {/* Manual token refresh for OAuth accounts */}
-        {onRefreshToken && (
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="token"
-            loading={isRefreshing}
-            disabled={connection.isActive === false || isRefreshing}
-            onClick={onRefreshToken}
-            className="!h-7 !px-2 text-xs text-warning hover:text-warning"
-            title={t("refreshOauthTokenTitle")}
-          >
-            {t("tokenShort")}
-          </Button>
-        )}
-        {isCodex && onApplyCodexAuthLocal && (
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="download_done"
-            loading={isApplyingCodexAuthLocal}
-            disabled={isApplyingCodexAuthLocal}
-            onClick={onApplyCodexAuthLocal}
-            className="!h-7 !px-2 text-xs text-success hover:text-success"
-            title={applyCodexAuthLabel}
-          >
-            {applyCodexAuthLabel}
-          </Button>
-        )}
-        {isCodex && onExportCodexAuthFile && (
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="download"
-            loading={isExportingCodexAuthFile}
-            disabled={isExportingCodexAuthFile}
-            onClick={onExportCodexAuthFile}
-            className="!h-7 !px-2 text-xs text-info hover:text-info"
-            title={exportCodexAuthLabel}
-          >
-            {exportCodexAuthLabel}
-          </Button>
-        )}
-        {isClaude && onApplyClaudeAuthLocal && (
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="install_desktop"
-            loading={isApplyingClaudeAuthLocal}
-            disabled={isApplyingClaudeAuthLocal}
-            onClick={onApplyClaudeAuthLocal}
-            className="!h-7 !px-2 text-xs text-success hover:text-success"
-            title={applyClaudeAuthLabel}
-          >
-            {applyClaudeAuthLabel}
-          </Button>
-        )}
-        {isClaude && onExportClaudeAuthFile && (
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="download"
-            loading={isExportingClaudeAuthFile}
-            disabled={isExportingClaudeAuthFile}
-            onClick={onExportClaudeAuthFile}
-            className="!h-7 !px-2 text-xs text-info hover:text-info"
-            title={exportClaudeAuthLabel}
-          >
-            {exportClaudeAuthLabel}
-          </Button>
-        )}
-        <Toggle
-          size="sm"
-          checked={connection.isActive ?? true}
-          onChange={onToggleActive}
-          title={(connection.isActive ?? true) ? t("disableConnection") : t("enableConnection")}
-        />
-        <div className="flex gap-1 ms-1 transition-opacity">
-          {onReauth && (
-            <button
-              onClick={onReauth}
-              className="p-2 hover:bg-warning/10 rounded text-warning hover:text-warning"
-              title={t("reauthenticateConnection")}
-            >
-              <span className="material-symbols-outlined text-[18px]">passkey</span>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {onReauth && (
+              <button type="button" className={`${act} !text-warning`} onClick={onReauth}>
+                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                  passkey
+                </span>
+                {t("reauthenticateConnection")}
+              </button>
+            )}
+            <button type="button" className={act} onClick={onProxy}>
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                vpn_lock
+              </span>
+              {t("proxyConfig")}
             </button>
-          )}
-          <button
-            onClick={onEdit}
-            className="p-2 hover:bg-surface-2 rounded text-text-muted hover:text-primary"
-            title={t("edit")}
-          >
-            <span className="material-symbols-outlined text-[18px]">edit</span>
-          </button>
-          <button
-            onClick={onProxy}
-            className="p-2 hover:bg-surface-2 rounded text-text-muted hover:text-primary"
-            title={t("proxyConfig")}
-          >
-            <span className="material-symbols-outlined text-[18px]">vpn_lock</span>
-          </button>
-          <button
-            onClick={onDelete}
-            className="p-2 hover:bg-error/10 rounded text-error"
-            title={t("delete")}
-          >
-            <span className="material-symbols-outlined text-[18px]">delete</span>
-          </button>
+            {onRefreshToken && (
+              <button
+                type="button"
+                className={`${act} !text-warning`}
+                disabled={connection.isActive === false || isRefreshing}
+                onClick={onRefreshToken}
+                title={t("refreshOauthTokenTitle")}
+              >
+                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                  token
+                </span>
+                {t("tokenShort")}
+              </button>
+            )}
+            {isCodex && onApplyCodexAuthLocal && (
+              <button
+                type="button"
+                className={`${act} !text-success`}
+                disabled={isApplyingCodexAuthLocal}
+                onClick={onApplyCodexAuthLocal}
+              >
+                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                  download_done
+                </span>
+                {applyCodexAuthLabel}
+              </button>
+            )}
+            {isCodex && onExportCodexAuthFile && (
+              <button
+                type="button"
+                className={`${act} !text-info`}
+                disabled={isExportingCodexAuthFile}
+                onClick={onExportCodexAuthFile}
+              >
+                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                  download
+                </span>
+                {exportCodexAuthLabel}
+              </button>
+            )}
+            {isClaude && onApplyClaudeAuthLocal && (
+              <button
+                type="button"
+                className={`${act} !text-success`}
+                disabled={isApplyingClaudeAuthLocal}
+                onClick={onApplyClaudeAuthLocal}
+              >
+                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                  install_desktop
+                </span>
+                {applyClaudeAuthLabel}
+              </button>
+            )}
+            {isClaude && onExportClaudeAuthFile && (
+              <button
+                type="button"
+                className={`${act} !text-info`}
+                disabled={isExportingClaudeAuthFile}
+                onClick={onExportClaudeAuthFile}
+              >
+                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                  download
+                </span>
+                {exportClaudeAuthLabel}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

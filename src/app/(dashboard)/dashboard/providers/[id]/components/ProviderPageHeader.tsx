@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import ProviderIcon from "@/shared/components/ProviderIcon";
-import { getHeaderIconProviderId } from "../providerPageHelpers";
+import { getHeaderIconProviderId, providerText } from "../providerPageHelpers";
 import type { ProviderMessageTranslator } from "../providerPageHelpers";
 
 interface ProviderInfo {
@@ -43,7 +43,7 @@ export default function ProviderPageHeader({
         className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-primary transition-colors mb-4"
       >
         <span className="material-symbols-outlined text-lg">arrow_back</span>
-        {t("backToProviders")}
+        {providerText(t, "backToAccounts", "Back to Accounts")}
       </Link>
       <div className="flex items-center gap-4">
         <div
@@ -71,7 +71,7 @@ export default function ProviderPageHeader({
               href={providerInfo.website}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xl font-semibold tracking-tight hover:underline inline-flex items-center gap-2"
+              className="text-xl font-semibold tracking-tight hover:underline inline-flex items-center gap-2 break-normal [overflow-wrap:normal]"
               style={{ color: providerInfo.color }}
             >
               {providerInfo.name}

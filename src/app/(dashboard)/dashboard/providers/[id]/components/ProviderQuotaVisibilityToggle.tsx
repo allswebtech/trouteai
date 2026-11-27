@@ -20,13 +20,12 @@ export default function ProviderQuotaVisibilityToggle({
 
   return (
     <>
-      <span className="text-text-muted/70 select-none">|</span>
       <button
         type="button"
         onClick={() => onToggle(!visible)}
         aria-pressed={visible}
         aria-label={actionLabel}
-        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-all cursor-pointer ${
+        className={`inline-flex min-h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium transition-colors ${
           visible
             ? "bg-info/15 text-info hover:bg-info/25"
             : "bg-surface-2 text-text-muted hover:text-text-main hover:bg-border"
