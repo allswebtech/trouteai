@@ -790,7 +790,7 @@ export default function ConnectionRow({
                 }
               >
                 <span className="material-symbols-outlined text-[13px]">key</span>
-                {perKeyProxyEnabled ? t("perKeyProxyOn") : t("perKeyProxyOff")}
+                {t("perKeyProxyOn")} {perKeyProxyEnabled ? t("toggleOnShort") : t("toggleOffShort")}
               </button>
             )}
             {hasProxy &&
